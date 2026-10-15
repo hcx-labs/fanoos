@@ -1,0 +1,20 @@
+{
+  "name": "tube",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run companion & npm run dev --workspace @tube/server & npm run dev --workspace @tube/web",
+    "build": "npm run build --workspace @tube/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "companion": "scripts/companion.sh",
+    "companion:signed-in": "scripts/companion.sh signed-in"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

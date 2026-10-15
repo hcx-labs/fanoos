@@ -1,0 +1,336 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/inter/wght.css";
+@import "@fontsource-variable/bricolage-grotesque/wght.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* State variants used by the shadcn UI kit components (the kit gets these from shadcn/tailwind.css). */
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-state="on"]),
+  &:where([data-active]:not([data-active="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected="true"]) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-inset {
+  &:where([data-inset]:not([data-inset="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-placeholder {
+  &:where([data-placeholder]) {
+    @slot;
+  }
+}
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
+}
+
+/*
+ * Palette: warm "screening room" neutrals with a projector-amber signal colour.
+ * `brand` is decorative (indicators, progress, focus); `brand-strong` is the AA-safe
+ * shade used where text sits on it.
+ */
+:root {
+  --radius: 0.75rem;
+
+  --background: oklch(0.985 0.004 85);
+  --foreground: oklch(0.2 0.012 60);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.22 0.012 60);
+  --primary-foreground: oklch(0.985 0.004 85);
+  --secondary: oklch(0.95 0.006 80);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.95 0.006 80);
+  --muted-foreground: oklch(0.5 0.014 60);
+  --accent: oklch(0.94 0.008 80);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.56 0.2 27);
+  --border: oklch(0.9 0.008 80);
+  --input: oklch(0.88 0.008 80);
+  --ring: oklch(0.7 0.15 65);
+
+  --brand: oklch(0.74 0.16 65);
+  --brand-strong: oklch(0.52 0.14 55);
+  --brand-foreground: oklch(0.99 0 0);
+  --brand-soft: oklch(0.95 0.05 80);
+
+  --like: oklch(0.6 0.13 155);
+  --dislike: oklch(0.6 0.17 25);
+
+  /* SponsorBlock category colours (match the community conventions). */
+  --seg-sponsor: oklch(0.72 0.19 145);
+  --seg-selfpromo: oklch(0.82 0.16 95);
+  --seg-interaction: oklch(0.65 0.2 310);
+  --seg-intro: oklch(0.75 0.13 200);
+  --seg-outro: oklch(0.6 0.15 255);
+  --seg-preview: oklch(0.7 0.12 235);
+  --seg-filler: oklch(0.6 0.2 300);
+  --seg-music: oklch(0.75 0.17 50);
+
+  --chart-1: var(--brand);
+  --chart-2: oklch(0.6 0.13 200);
+  --chart-3: oklch(0.55 0.15 280);
+  --chart-4: oklch(0.65 0.14 150);
+  --chart-5: oklch(0.6 0.17 25);
+
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px -8px rgb(0 0 0 / 0.18);
+}
+
+.dark {
+  --background: oklch(0.145 0.002 60);
+  --foreground: oklch(0.95 0.006 85);
+  --card: oklch(0.19 0.003 60);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.21 0.003 60);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.95 0.006 85);
+  --primary-foreground: oklch(0.18 0.008 60);
+  --secondary: oklch(0.24 0.003 60);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.235 0.003 60);
+  --muted-foreground: oklch(0.7 0.006 75);
+  --accent: oklch(0.26 0.003 60);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.68 0.19 25);
+  --border: oklch(1 0.01 80 / 9%);
+  --input: oklch(1 0.01 80 / 13%);
+  --ring: oklch(0.8 0.15 70);
+
+  --brand: oklch(0.8 0.15 70);
+  --brand-strong: oklch(0.82 0.14 72);
+  --brand-foreground: oklch(0.2 0.03 60);
+  --brand-soft: oklch(0.3 0.05 65);
+
+  --like: oklch(0.75 0.14 155);
+  --dislike: oklch(0.72 0.15 25);
+
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -12px rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-display: "Bricolage Grotesque Variable", var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-like: var(--like);
+  --color-dislike: var(--dislike);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-3xl: calc(var(--radius) * 2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  --shadow-float: var(--shadow-float);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  html {
+    @apply font-sans;
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01";
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground min-h-dvh text-sm;
+    margin: 0;
+    /* Never scroll sideways. clip (not hidden) keeps sticky headers working. */
+    overflow-x: clip;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 40%, transparent);
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Focus rings are for keyboard users; main.tsx records the last input type on <html>.
+ * Deliberately outside any @layer: unlayered rules beat the kit's focus utilities
+ * (which live in the utilities layer) regardless of specificity.
+ */
+[data-input="pointer"] :focus-visible {
+  outline: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+[data-input="pointer"] [role="tab"]:focus-visible {
+  border-color: transparent;
+}
+[data-input="pointer"] [data-slot="button"][data-variant="outline"]:focus-visible {
+  border-color: var(--border);
+}
+
+/* The one page container: every page shares this width, gutter and top spacing so edges line up. */
+@utility page {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 1600px;
+  padding: 1.5rem 1rem 4rem;
+  @variant sm {
+    padding-inline: 1.5rem;
+  }
+  @variant lg {
+    padding-inline: 2rem;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Header is flush with the page at rest; frosted with a hairline once content scrolls under. */
+@utility top-bar {
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease;
+  &[data-scrolled] {
+    background: color-mix(in oklab, var(--background) 80%, transparent);
+    backdrop-filter: saturate(160%) blur(18px);
+    border-bottom-color: var(--border);
+  }
+}
+
+/* Soft light leak behind page tops. */
+@utility page-glow {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 28rem;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 60% at 15% 0%, color-mix(in oklab, var(--brand) 14%, transparent), transparent 70%),
+    radial-gradient(40% 50% at 85% 0%, color-mix(in oklab, var(--chart-2) 10%, transparent), transparent 70%);
+}
+
+@utility rise {
+  animation: rise 420ms var(--ease-out-quint) both;
+}
+
+@keyframes hero-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
