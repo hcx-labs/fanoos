@@ -107,7 +107,34 @@ export function AgeRestrictedSetup() {
         </div>
       )}
 
-      {state.status === "ready" && (
+      {state.status === "external" && (
+        <div className="space-y-3 text-sm">
+          <p>
+            In Docker, signed-in playback runs as its own container, <code className="bg-muted rounded px-1 py-0.5 text-xs">companion-signed-in</code>. Start it
+            next to <code className="bg-muted rounded px-1 py-0.5 text-xs">compose.yaml</code>:
+          </p>
+          <pre className="bg-muted overflow-x-auto rounded-lg p-3 text-xs">docker compose --profile age-restricted up -d companion-signed-in{"\n"}docker compose logs -f companion-signed-in</pre>
+          <p className="text-muted-foreground text-xs">
+            On first start its log shows a code to enter at google.com/device. Sign in there with a secondary Google account; once the log says it started,
+            come back and check again. The sign-in is kept in the container's volume.
+          </p>
+          <Button onClick={() => void run("/admin/b/youtube/age-restricted/start")} disabled={busy}>
+            {busy && <Spinner />} Check again
+          </Button>
+        </div>
+      )}
+
+      {state.status === "ready" && state.external && (
+        <p className="flex items-start gap-2 text-sm">
+          <Check className="text-like mt-0.5 size-4 shrink-0" />
+          <span>
+            Signed in. Age-restricted videos now play through this account. To sign out, stop <code className="bg-muted rounded px-1 py-0.5 text-xs">companion-signed-in</code> and
+            remove its volume (<code className="bg-muted rounded px-1 py-0.5 text-xs">docker compose --profile age-restricted down -v companion-signed-in</code>).
+          </span>
+        </p>
+      )}
+
+      {state.status === "ready" && !state.external && (
         <div className="flex flex-wrap items-center gap-3">
           <p className="flex flex-1 items-center gap-2 text-sm">
             <Check className="text-like size-4" /> Signed in. Age-restricted videos now play through this account.

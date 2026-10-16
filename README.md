@@ -62,7 +62,7 @@ cp compose.env.example .env   # fill in BACKEND_TOKEN, COMPANION_SECRET, Google 
 docker compose up -d
 ```
 
-Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. In Docker, signed-in playback for age-restricted videos needs its own companion container; point `COMPANION_SIGNED_IN_URL` at it.
+Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then enter the code from `docker compose logs -f companion-signed-in` at google.com/device. Settings → Age-restricted shows the same steps.
 
 ### Releases
 

@@ -40,7 +40,10 @@ export type AgeRestrictedSetup =
   | { status: "off" }
   | { status: "starting" }
   | { status: "waiting"; code: string; url: string }
-  | { status: "ready" }
+  /** `external`: it runs as its own service (Docker), not started by the backend. */
+  | { status: "ready"; external?: boolean }
+  /** Runs as its own service (Docker) and isn't answering yet: start it there. */
+  | { status: "external"; url: string }
   | { status: "error"; error: string };
 
 /**

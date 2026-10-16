@@ -38,6 +38,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       COMPANION_URL: http://companion:8282
+      # Optional signed-in instance for age-restricted videos (profile "age-restricted" below).
+      COMPANION_SIGNED_IN_URL: http://companion-signed-in:8282
       COMPANION_SECRET: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
     volumes: [youtube-data:/data]
     depends_on: [redis, companion]
@@ -60,12 +62,29 @@ services:
       HOST: 0.0.0.0
       PORT: "8282"
 
+  # Optional: a signed-in companion, used only for age-restricted videos. Start it with
+  #   docker compose --profile age-restricted up -d companion-signed-in
+  # and enter the code from its log (docker compose logs -f companion-signed-in) at google.com/device.
+  # Use a secondary Google account. The sign-in is kept in the companion-signed-in volume.
+  companion-signed-in:
+    image: quay.io/invidious/invidious-companion:latest
+    profiles: [age-restricted]
+    restart: unless-stopped
+    environment:
+      SERVER_SECRET_KEY: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
+      HOST: 0.0.0.0
+      PORT: "8282"
+      YOUTUBE_SESSION_OAUTH_ENABLED: "true"
+      CACHE_DIRECTORY: /cache
+    volumes: [companion-signed-in:/cache]
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
 
 volumes:
+  companion-signed-in:
   core-data:
   youtube-data:
   crunchyroll-data:

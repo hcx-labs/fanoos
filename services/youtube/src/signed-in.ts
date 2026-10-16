@@ -1,25 +1,26 @@
 /*
  * The signed-in streaming companion, managed from the app (Settings → Age-restricted
- * videos). The API starts it as a child process, reads Google's device sign-in code
- * from its output for the UI, and restarts it on boot when a session is saved.
+ * videos). This backend starts it as a child process, reads Google's device sign-in code
+ * from its output for the UI, and restarts it on boot when a session is saved. In a
+ * container image it runs as its own service instead (compose.yaml), and is adopted
+ * when it answers at COMPANION_SIGNED_IN_URL.
  * It is only ever asked to stream videos YouTube age-restricts (see stream.ts).
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { AgeRestrictedSetup } from "@tube/shared";
 import { config } from "./config.ts";
 
-export type SignedInState =
-  | { status: "off" }
-  | { status: "starting" }
-  | { status: "waiting"; code: string; url: string }
-  | { status: "ready" }
-  | { status: "error"; error: string };
+export type SignedInState = AgeRestrictedSetup;
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const script = join(repoRoot, "scripts/companion.sh");
 const cacheDir = join(config.dataDir, "companion-signed-in");
 const port = Number(new URL(config.companion.signedInUrl || "http://127.0.0.1:8283").port || 8283);
+
+/** No companion script here (a container image): the signed-in instance runs as its own service. */
+const external = !existsSync(script);
 
 /** Where the signed-in instance listens: one this backend starts locally, or another container (Docker). */
 export const signedInUrl = config.companion.signedInUrl || `http://127.0.0.1:${port}`;
@@ -27,7 +28,7 @@ export const signedInUrl = config.companion.signedInUrl || `http://127.0.0.1:${p
 let state: SignedInState = { status: "off" };
 let child: ChildProcess | null = null;
 
-export const signedInState = (): SignedInState => state;
+export const signedInState = (): SignedInState => (external && state.status === "off" ? { status: "external", url: signedInUrl } : state);
 export const signedInReady = () => state.status === "ready";
 
 /** A completed sign-in leaves YouTube.js OAuth credentials in the cache folder. */
@@ -46,11 +47,9 @@ async function healthy() {
 export async function startSignedIn(): Promise<SignedInState> {
   if (child || state.status === "ready") return state;
   if (!config.companion.secret) return (state = { status: "error", error: "COMPANION_SECRET isn't set on the server." });
-  if (await healthy()) return (state = { status: "ready" });
+  if (await healthy()) return (state = { status: "ready", external: external || undefined });
   // In a container there's no companion script or Deno: the instance has to run as its own service.
-  if (!existsSync(script)) {
-    return (state = { status: "error", error: `No signed-in streaming service at ${signedInUrl}. Start it (see compose.yaml) and try again.` });
-  }
+  if (external) return (state = { status: "external", url: signedInUrl });
 
   state = { status: "starting" };
   const proc = spawn("bash", [script, "signed-in"], {
@@ -104,7 +103,7 @@ export function signOutSignedIn() {
 export function resumeSignedIn() {
   if (hasSavedSession()) void startSignedIn();
   // Adopt an instance that runs on its own (another container), if one answers.
-  else void healthy().then((ok) => ok && (state = { status: "ready" }));
+  else void healthy().then((ok) => ok && (state = { status: "ready", external: external || undefined }));
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
