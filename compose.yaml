@@ -64,6 +64,10 @@ services:
     # If YouTube refuses this server's address (common on VPS IPs: `docker compose logs companion`
     # shows "Failed to validate PO token"), resolve YouTube through a DNS-based proxy instead:
     # dns: [203.0.113.1, 203.0.113.2]
+    # Most DNS proxies only rewrite IPv4; switch IPv6 off so nothing goes around them:
+    # sysctls:
+    #   net.ipv6.conf.all.disable_ipv6: 1
+    #   net.ipv6.conf.default.disable_ipv6: 1
 
   # Optional: a signed-in companion, used only for age-restricted videos. Start it with
   #   docker compose --profile age-restricted up -d companion-signed-in
@@ -82,6 +86,9 @@ services:
     volumes: [companion-signed-in:/cache]
     # Same DNS-based proxy as the companion, if you use one:
     # dns: [203.0.113.1, 203.0.113.2]
+    # sysctls:
+    #   net.ipv6.conf.all.disable_ipv6: 1
+    #   net.ipv6.conf.default.disable_ipv6: 1
 
   redis:
     image: redis:7-alpine
