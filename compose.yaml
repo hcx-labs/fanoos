@@ -37,6 +37,13 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      # Optional: send this backend's own YouTube requests (video pages, search, channels) through a
+      # proxy too, e.g. YOUTUBE_PROXY=http://warp:1080, when YouTube serves this server stripped-down
+      # pages (no view counts or descriptions). Node 24 picks these up; the companions stay direct.
+      NODE_USE_ENV_PROXY: ${YOUTUBE_PROXY:+1}
+      HTTPS_PROXY: ${YOUTUBE_PROXY:-}
+      HTTP_PROXY: ${YOUTUBE_PROXY:-}
+      NO_PROXY: companion,companion-signed-in,redis,localhost,127.0.0.1
       COMPANION_URL: http://companion:8282
       # Optional signed-in instance for age-restricted videos (profile "age-restricted" below).
       COMPANION_SIGNED_IN_URL: http://companion-signed-in:8282
