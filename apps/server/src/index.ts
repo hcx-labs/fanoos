@@ -5,6 +5,7 @@ import { config } from "./config.ts";
 import { sweep } from "./db.ts";
 import { type AppEnv, sameOrigin } from "./http.ts";
 import { scheduleMigration } from "./migrate.ts";
+import { webApp } from "./web.ts";
 import { accountRoutes } from "./routes/accounts.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { dataRoutes } from "./routes/data.ts";
@@ -42,8 +43,13 @@ setInterval(sweep, 10 * 60_000).unref();
 // Accounts linked before backends were separate services move to their backend.
 scheduleMigration();
 
-serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, ({ port }) => {
-  console.log(`API on http://127.0.0.1:${port}/api  (app origin ${config.publicUrl.origin})`);
+// In production (WEB_ROOT set) the same server also serves the built web app.
+const site = config.webRoot ? new Hono().get("*", webApp(config.webRoot)) : null;
+const fetch = (request: Request, env: unknown) =>
+  site && !new URL(request.url).pathname.startsWith("/api/") ? site.fetch(request, env) : app.fetch(request, env);
+
+serve({ fetch, port: config.port, hostname: config.host }, ({ port }) => {
+  console.log(`API on http://${config.host}:${port}/api  (app origin ${config.publicUrl.origin})${site ? `; web app from ${config.webRoot}` : ""}`);
   console.log(`Backends: ${config.backends.map((b) => `${b.slug} (${b.url})`).join(", ") || "none"}`);
   if (!config.backendToken) console.warn("BACKEND_TOKEN isn't set: backends will refuse every request.");
   if (config.oidc.enabled) console.log(`Sign-in: OIDC only (${config.oidc.name}, ${config.oidc.issuer}); password and passkey sign-in are disabled.`);

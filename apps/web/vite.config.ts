@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 /** Short commit hash, with "+" when there are uncommitted changes. */
 function commit() {
+  // Container builds have no .git; the release workflow passes the commit in.
+  if (process.env.FANOOS_COMMIT) return process.env.FANOOS_COMMIT.slice(0, 7);
   try {
     const hash = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     const dirty = execSync("git status --porcelain", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim().length > 0;

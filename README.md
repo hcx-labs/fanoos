@@ -53,6 +53,21 @@ Needs Node 24+, [Deno](https://deno.com) (`brew install deno`) for the streaming
 
 Core and every backend share one secret, `BACKEND_TOKEN`: set the same random value in all three `.env` files (`openssl rand -base64 32`). Core finds the backends through `BACKENDS` (`slug=url` pairs; the slug appears in app URLs, e.g. `/watch/youtube/<id>`).
 
+## Docker
+
+Each release publishes three images for `linux/amd64` and `linux/arm64`: `ghcr.io/hcx-labs/fanoos-core` (which also serves the web app), `fanoos-youtube` and `fanoos-crunchyroll`. To run everything, with the streaming companion and Redis:
+
+```sh
+cp compose.env.example .env   # fill in BACKEND_TOKEN, COMPANION_SECRET, Google OAuth…
+docker compose up -d
+```
+
+Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. In Docker, signed-in playback for age-restricted videos needs its own companion container; point `COMPANION_SIGNED_IN_URL` at it.
+
+### Releases
+
+Actions → **Release** → Run workflow, and pick **patch**, **minor** or **major**. The workflow bumps the version in every package, commits and tags it, builds and pushes the three images, and publishes a GitHub release listing them.
+
 ## Layout
 
 npm workspaces:

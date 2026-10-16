@@ -21,8 +21,8 @@ const script = join(repoRoot, "scripts/companion.sh");
 const cacheDir = join(config.dataDir, "companion-signed-in");
 const port = Number(new URL(config.companion.signedInUrl || "http://127.0.0.1:8283").port || 8283);
 
-/** Where the signed-in instance listens. */
-export const signedInUrl = `http://127.0.0.1:${port}`;
+/** Where the signed-in instance listens: one this backend starts locally, or another container (Docker). */
+export const signedInUrl = config.companion.signedInUrl || `http://127.0.0.1:${port}`;
 
 let state: SignedInState = { status: "off" };
 let child: ChildProcess | null = null;
@@ -47,6 +47,10 @@ export async function startSignedIn(): Promise<SignedInState> {
   if (child || state.status === "ready") return state;
   if (!config.companion.secret) return (state = { status: "error", error: "COMPANION_SECRET isn't set on the server." });
   if (await healthy()) return (state = { status: "ready" });
+  // In a container there's no companion script or Deno: the instance has to run as its own service.
+  if (!existsSync(script)) {
+    return (state = { status: "error", error: `No signed-in streaming service at ${signedInUrl}. Start it (see compose.yaml) and try again.` });
+  }
 
   state = { status: "starting" };
   const proc = spawn("bash", [script, "signed-in"], {
@@ -99,6 +103,8 @@ export function signOutSignedIn() {
 /** On boot: resume automatically if a session was saved earlier. */
 export function resumeSignedIn() {
   if (hasSavedSession()) void startSignedIn();
+  // Adopt an instance that runs on its own (another container), if one answers.
+  else void healthy().then((ok) => ok && (state = { status: "ready" }));
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

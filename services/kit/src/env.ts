@@ -11,6 +11,8 @@ export function serviceConfig(name: string, defaultPort: number) {
   return {
     name,
     port: Number(env.PORT ?? defaultPort),
+    /** Listen address: loopback by default; 0.0.0.0 in containers. */
+    host: env.HOST || "127.0.0.1",
     dataDir,
     secret: loadSecret(dataDir),
     /** Shared with Fanoos core; every /v1 request must present it. */

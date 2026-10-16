@@ -1,0 +1,71 @@
+# The whole Fanoos stack from the published images.
+#   cp compose.env.example .env   # fill it in
+#   docker compose up -d          # then open PUBLIC_URL
+# Only core is published; backends, the streaming companion and Redis stay on the internal network.
+name: fanoos
+
+x-backend: &backend
+  restart: unless-stopped
+  environment: &backend-env
+    BACKEND_TOKEN: ${BACKEND_TOKEN:?set BACKEND_TOKEN in .env}
+    PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8787}
+    REDIS_URL: redis://redis:6379
+  depends_on: [redis]
+
+services:
+  core:
+    image: ghcr.io/hcx-labs/fanoos-core:${FANOOS_VERSION:-latest}
+    restart: unless-stopped
+    ports: ["${FANOOS_PORT:-8787}:8787"]
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8787}
+      BACKEND_TOKEN: ${BACKEND_TOKEN:?set BACKEND_TOKEN in .env}
+      BACKENDS: youtube=http://youtube:8788,crunchyroll=http://crunchyroll:8789
+      SECRET_KEY: ${CORE_SECRET_KEY:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_NAME: ${OIDC_NAME:-}
+    volumes: [core-data:/data]
+    depends_on: [youtube, crunchyroll]
+
+  youtube:
+    <<: *backend
+    image: ghcr.io/hcx-labs/fanoos-youtube:${FANOOS_VERSION:-latest}
+    environment:
+      <<: *backend-env
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      COMPANION_URL: http://companion:8282
+      COMPANION_SECRET: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
+    volumes: [youtube-data:/data]
+    depends_on: [redis, companion]
+
+  crunchyroll:
+    <<: *backend
+    image: ghcr.io/hcx-labs/fanoos-crunchyroll:${FANOOS_VERSION:-latest}
+    environment:
+      <<: *backend-env
+      CRUNCHYROLL_BASIC_AUTH: ${CRUNCHYROLL_BASIC_AUTH:-}
+      CRUNCHYROLL_APP_VERSION: ${CRUNCHYROLL_APP_VERSION:-}
+    volumes: [crunchyroll-data:/data]
+
+  # Generates YouTube's anti-bot tokens and streams media for the YouTube backend.
+  companion:
+    image: quay.io/invidious/invidious-companion:latest
+    restart: unless-stopped
+    environment:
+      SERVER_SECRET_KEY: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
+      HOST: 0.0.0.0
+      PORT: "8282"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+
+volumes:
+  core-data:
+  youtube-data:
+  crunchyroll-data:

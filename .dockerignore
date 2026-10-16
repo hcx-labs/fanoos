@@ -1,0 +1,11 @@
+# Only sources and manifests go into image builds.
+**/node_modules
+**/dist
+**/data
+**/.env
+**/*.sqlite*
+.git
+.github
+docs
+vendor
+apps/web/public/*.map

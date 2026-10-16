@@ -23,6 +23,10 @@ const publicUrl = new URL(env.PUBLIC_URL ?? "http://localhost:5180");
 
 export const config = {
   port: Number(env.PORT ?? 8787),
+  /** Listen address: loopback by default; 0.0.0.0 in containers. */
+  host: env.HOST || "127.0.0.1",
+  /** The built web app (apps/web/dist) to serve alongside the API; empty when Vite serves it (development). */
+  webRoot: env.WEB_ROOT ?? "",
   /** Where the web app is served. Cookies, OAuth redirects and passkeys are bound to this origin. */
   publicUrl,
   dataDir,

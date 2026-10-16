@@ -243,13 +243,15 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   }, [stream.drm?.widevine]);
 
   // Where to pick up when the stream is swapped under a mounted player (another audio language).
-  const handoff = useRef<{ time: number; playing: boolean } | null>(null);
+  const handoff = useRef<{ from: string; time: number; playing: boolean } | null>(null);
 
   // Attach the stream: DASH through dash.js, or a single progressive file.
   useEffect(() => {
     const el = media.current;
     if (!el) return;
-    const resume = handoff.current;
+    // Only a different stream continues from the old one; the same stream set up again
+    // (React runs effects twice in development) starts where it should.
+    const resume = handoff.current && handoff.current.from !== stream.dash ? handoff.current : null;
     handoff.current = null;
     setFailure(null);
     if (stream.dash) {
@@ -267,12 +269,22 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         });
       }
       const preference = codecPreference();
+      // Where to start: the handed-over position (audio switch) or the saved one. dash.js's own
+      // startTime is lost when the codec track switches below, so it's applied again after that.
+      const start = (resume ? resume.time : resumeAt) || 0;
+      let placed = !start;
+      const place = () => {
+        if (placed) return;
+        placed = true;
+        if (el.currentTime < start - 1) player.seek(start);
+      };
       player.on("streamInitialized", async () => {
         // One video track per codec: pick the first the device decodes efficiently.
         const tracks = player.getTracksFor("video");
         const order = await preference;
         const chosen = order.map((re) => tracks.find((t) => re.test(t.codec ?? ""))).find(Boolean) ?? tracks[0];
         if (chosen && chosen !== player.getCurrentTrackFor("video")) player.setCurrentTrack(chosen);
+        place();
         setHeights([...new Set((chosen?.bitrateList ?? []).map((b) => b.height ?? 0))].filter(Boolean).sort((a, b) => b - a));
       });
       player.on("qualityChangeRendered", (e: { mediaType?: string }) => {
@@ -291,13 +303,15 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
               : "Something went wrong while playing this video.",
         );
       });
-      player.initialize(el, stream.dash, resume?.playing ?? false, (resume ? resume.time : resumeAt) || undefined);
+      // Fallback: if the stream came up without the start position, put it there before playing.
+      el.addEventListener("loadedmetadata", place, { once: true });
+      player.initialize(el, stream.dash, resume?.playing ?? false, start || undefined);
       dash.current = player;
       // Development aid: inspect playback from the browser console.
       if (import.meta.env.DEV) Object.assign(window, { __dash: player });
       return () => {
         // If another stream replaces this one, carry on from here.
-        handoff.current = { time: el.currentTime, playing: !el.paused };
+        handoff.current = { from: stream.dash!, time: el.currentTime, playing: !el.paused };
         dash.current = null;
         player.destroy();
       };

@@ -75,7 +75,7 @@ export function createService(config: ServiceConfig, info: () => BackendInfo) {
     start() {
       app.route("/v1", v1);
       app.route("/public", pub);
-      serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, ({ port }) =>
+      serve({ fetch: app.fetch, port: config.port, hostname: config.host }, ({ port }) =>
         console.log(`${info().name} backend on http://127.0.0.1:${port}  (protocol v${info().protocol})`),
       );
     },
