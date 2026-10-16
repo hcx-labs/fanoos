@@ -37,7 +37,7 @@ const hasSavedSession = () =>
 
 async function healthy() {
   try {
-    return (await fetch(`${signedInUrl}/companion/healthz`, { signal: AbortSignal.timeout(2000) })).ok;
+    return (await fetch(`${signedInUrl}/healthz`, { signal: AbortSignal.timeout(2000) })).ok;
   } catch {
     return false;
   }
