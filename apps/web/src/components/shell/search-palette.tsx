@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { History, Link2, Lock, Search, X } from "lucide-react";
 import { ChannelAvatar } from "@/components/channel-avatar";
+import { ServiceMark } from "@/components/service-mark";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format";
 import { paths } from "@/lib/paths";
-import { openYouTubeLink } from "@/lib/open-link";
-import { suggest, useSource } from "@/lib/source";
-import { parseYouTubeLink } from "@/lib/youtube-url";
+import { openLink, pathFor, useLinkPreview } from "@/lib/open-link";
+import { suggest } from "@/lib/source";
 import { actions, useStore } from "@/lib/store";
 
 /**
@@ -22,7 +22,6 @@ const item = "[&>svg:last-child]:hidden";
 
 export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const navigate = useNavigate();
-  const source = useSource();
   const inputRef = useRef<HTMLInputElement>(null);
   const searches = useStore((s) => s.searches);
   const [query, setQuery] = useState("");
@@ -36,14 +35,14 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
     onOpenChange(false);
     navigate(path);
   };
-  const link = parseYouTubeLink(query);
+  const link = useLinkPreview(query);
   const search = (q: string) => {
     if (!q.trim()) return;
-    // A pasted YouTube link opens the video or channel instead of searching for it.
-    const pasted = parseYouTubeLink(q);
-    if (pasted) {
+    // A pasted link (YouTube, Crunchyroll…) opens what it points to instead of searching for it.
+    if (link) {
       onOpenChange(false);
-      void openYouTubeLink(pasted, navigate, source);
+      if (link.result) navigate(pathFor(link.result));
+      else void openLink(link.url, navigate, link.service);
       return;
     }
     actions.searched(q);
@@ -64,7 +63,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search videos and channels</DialogDescription>
         <Command shouldFilter={false} loop>
-          <CommandInput ref={inputRef} placeholder="Search videos, channels… or paste a YouTube link" value={query} onValueChange={setQuery} />
+          <CommandInput ref={inputRef} placeholder="Search everything… or paste a link" value={query} onValueChange={setQuery} />
           <CommandList className="max-h-[min(60vh,28rem)]">
             <CommandEmpty>Press Enter to search everywhere.</CommandEmpty>
             {query.trim() && (
@@ -72,16 +71,17 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
                 {link ? (
                   <CommandItem className={item} value={`open:${query}`} onSelect={() => search(query)}>
                     <Link2 />
-                    {link.kind === "video" ? (
+                    {link.loading ? (
+                      <span className="text-muted-foreground">Looking up this {link.service} link…</span>
+                    ) : !link.result ? (
+                      <>Open on {link.service}</>
+                    ) : link.result.type === "video" ? (
                       <>
-                        Open this video{link.start ? <span className="text-muted-foreground"> at {formatDuration(link.start)}</span> : null}
-                      </>
-                    ) : link.kind === "handle" ? (
-                      <>
-                        Open channel <span className="font-semibold">{link.label}</span>
+                        Open this {link.service} {link.service === "YouTube" ? "video" : "episode"}
+                        {link.result.start ? <span className="text-muted-foreground"> at {formatDuration(link.result.start)}</span> : null}
                       </>
                     ) : (
-                      "Open this channel"
+                      <>Open this {link.service} {link.service === "YouTube" ? "channel" : "show"}</>
                     )}
                     <Kbd className="ml-auto">↵</Kbd>
                   </CommandItem>
@@ -118,12 +118,12 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
             {suggestions.channels.length > 0 && (
               <>
                 <CommandSeparator />
-                <CommandGroup heading="Your channels">
+                <CommandGroup heading="Following">
                   {suggestions.channels.map((channel) => (
-                    <CommandItem className={item} key={channel.id} value={`channel:${channel.id}`} onSelect={() => go(paths.channel(channel))}>
+                    <CommandItem className={item} key={`${channel.backend}:${channel.id}`} value={`channel:${channel.backend}:${channel.id}`} onSelect={() => go(paths.channel(channel))}>
                       <ChannelAvatar name={channel.name} src={channel.avatar} className="size-6" textClassName="text-[10px]" />
                       {channel.name}
-                      <span className="text-muted-foreground ml-auto text-xs">{channel.handle}</span>
+                      <ServiceMark backend={channel.backend} className="ml-auto" />
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -132,9 +132,9 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
             {suggestions.videos.length > 0 && (
               <>
                 <CommandSeparator />
-                <CommandGroup heading="From your subscriptions">
+                <CommandGroup heading="From your feed">
                   {suggestions.videos.map((video) => (
-                    <CommandItem className={item} key={video.id} value={`video:${video.id}`} onSelect={() => go(paths.watch(video))}>
+                    <CommandItem className={item} key={`${video.backend}:${video.id}`} value={`video:${video.backend}:${video.id}`} onSelect={() => go(paths.watch(video))}>
                       <img src={video.thumbnail} alt="" referrerPolicy="no-referrer" className="aspect-video w-12 rounded object-cover" />
                       <span className="truncate">{video.title}</span>
                       <span className="text-muted-foreground ml-auto text-xs tabular-nums">{formatDuration(video.duration)}</span>
@@ -146,7 +146,9 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
           </CommandList>
           <div className="text-muted-foreground flex items-center gap-2 border-t px-3 py-2 text-xs">
             <Lock className="size-3.5" />
-            Suggestions are computed on this device. Nothing is sent until you press Enter.
+            {link
+              ? "Links are looked up through your Fanoos server."
+              : "Suggestions are computed on this device. Nothing is sent until you press Enter."}
           </div>
         </Command>
       </DialogContent>

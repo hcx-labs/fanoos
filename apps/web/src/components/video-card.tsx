@@ -2,9 +2,10 @@ import { Link } from "react-router";
 import { Clock3, CircleCheck, Radio } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
+import { episodeLabel, ServiceMark } from "@/components/service-mark";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatAgo, formatDuration, formatViews } from "@/lib/format";
-import { paths } from "@/lib/paths";
+import { itemKey, paths } from "@/lib/paths";
 import { segmentMeta } from "@/lib/segments";
 import { actions, useProgress, useSettings, useStore } from "@/lib/store";
 import type { Video } from "@/lib/types";
@@ -16,10 +17,11 @@ export function useVideoTitle(video: Video) {
 }
 
 export function Thumbnail({ video, className, size = "md" }: { video: Video; className?: string; size?: "sm" | "md" | "lg" }) {
-  const later = useStore((s) => s.watchLater.includes(video.id));
+  const key = itemKey(video);
+  const later = useStore((s) => s.watchLater.includes(key));
   const settings = useSettings();
   const skipped = (video.segments ?? []).filter((s) => settings.segments[s.category] === "skip");
-  const position = useProgress(video.id) ?? video.progress ?? 0;
+  const position = useProgress(key) ?? video.progress ?? 0;
   const watched = video.duration ? Math.min(1, position / video.duration) : 0;
 
   return (
@@ -71,7 +73,7 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
               aria-label={later ? "Remove from Watch later" : "Save to Watch later"}
               onClick={(event) => {
                 event.preventDefault();
-                actions.toggleWatchLater(video.id);
+                actions.toggleWatchLater(key);
               }}
               className={cn(
                 "absolute top-2 right-2 grid size-8 place-items-center rounded-lg bg-black/70 text-white backdrop-blur-sm transition-opacity hover:bg-black/90 focus-visible:opacity-100",
@@ -95,17 +97,20 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
 }
 
 function Meta({ video, className }: { video: Video; className?: string }) {
+  // Episodes say where they sit in the show; videos say how many watched them.
+  const lead = video.episode ? episodeLabel(video.episode) : formatViews(video);
   return (
-    <p className={cn("text-muted-foreground text-xs", className)}>
-      {[formatViews(video), formatAgo(video.published)].filter(Boolean).join(" · ")}
-      <ViaDots via={video.via} className="ml-2" />
+    <p className={cn("text-muted-foreground flex items-center gap-1.5 text-xs", className)}>
+      <ServiceMark backend={video.backend} />
+      <span className="min-w-0 truncate">{[lead, formatAgo(video.published)].filter(Boolean).join(" · ")}</span>
+      <ViaDots via={video.via} className="ml-0.5" />
     </p>
   );
 }
 
 /** Grid card: thumbnail above, avatar + text below. */
 export function VideoCard({ video, showChannel = true }: { video: Video; showChannel?: boolean }) {
-  const channel = { id: video.channelId, name: video.channelName };
+  const channel = { id: video.channelId, backend: video.backend, name: video.channelName };
   const title = useVideoTitle(video);
   return (
     <article className="group/card relative">
@@ -149,7 +154,7 @@ export function VideoRow({
   active?: boolean;
   index?: number;
 }) {
-  const channel = { id: video.channelId, name: video.channelName };
+  const channel = { id: video.channelId, backend: video.backend, name: video.channelName };
   const title = useVideoTitle(video);
   return (
     <article
@@ -187,7 +192,10 @@ export function VideoRow({
               to={paths.channel(channel)}
               className="text-muted-foreground hover:text-foreground relative z-10 mt-3 inline-flex items-center gap-2 text-xs"
             >
-              <ChannelAvatar name={channel.name} src={video.channelAvatar} className="size-6" textClassName="text-[10px]" />
+              {/* Shows have key art, not an avatar; skip the initials placeholder for them. */}
+              {(!video.episode || video.channelAvatar) && (
+                <ChannelAvatar name={channel.name} src={video.channelAvatar} className="size-6" textClassName="text-[10px]" />
+              )}
               {channel.name}
             </Link>
             <p className="text-muted-foreground mt-2 line-clamp-2 max-w-prose text-xs">{video.description}</p>

@@ -13,13 +13,14 @@ export function AccountAvatar({ account, className, textClassName }: { account: 
 export const accountColor = (account: Pick<LinkedAccount, "id">) => `oklch(0.72 0.14 ${hueFor(account.id)})`;
 
 /**
- * Small coloured dots for the accounts an item came through. Hidden when the viewer
- * only has one feed account, since it would say nothing.
+ * Small coloured dots for the accounts an item came through. Shown only when the viewer has
+ * several feed accounts on the item's own service; otherwise the service mark says it all.
  */
 export function ViaDots({ via, className }: { via?: string[]; className?: string }) {
   const { inFeed, byId } = useAccounts();
-  if (!via?.length || inFeed.length < 2) return null;
-  const accounts = via.map(byId).filter((a): a is LinkedAccount => !!a);
+  const accounts = (via ?? []).map(byId).filter((a): a is LinkedAccount => !!a);
+  const backendId = accounts[0]?.backendId;
+  if (!accounts.length || inFeed.filter((a) => a.backendId === backendId).length < 2) return null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>

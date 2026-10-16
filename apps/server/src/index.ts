@@ -4,15 +4,14 @@ import { HTTPException } from "hono/http-exception";
 import { config } from "./config.ts";
 import { sweep } from "./db.ts";
 import { type AppEnv, sameOrigin } from "./http.ts";
-import { mediaRoutes } from "./media.ts";
-import { resumeSignedIn } from "./youtube/signed-in.ts";
+import { scheduleMigration } from "./migrate.ts";
 import { accountRoutes } from "./routes/accounts.ts";
-import { actionRoutes } from "./routes/actions.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { dataRoutes } from "./routes/data.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { oidcRoutes } from "./routes/oidc.ts";
 import { contentRoutes } from "./routes/content.ts";
+import { proxyRoutes } from "./routes/proxy.ts";
 
 const app = new Hono<AppEnv>().basePath("/api");
 
@@ -26,10 +25,9 @@ app.use("*", async (c, next) => {
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/auth/oidc", oidcRoutes);
 app.route("/auth", authRoutes);
-app.route("/", mediaRoutes);
+app.route("/b", proxyRoutes);
 app.route("/admin", adminRoutes);
 app.route("/me/data", dataRoutes);
-app.route("/actions", actionRoutes);
 app.route("/", accountRoutes);
 app.route("/", contentRoutes);
 
@@ -41,11 +39,12 @@ app.onError((error, c) => {
 });
 
 setInterval(sweep, 10 * 60_000).unref();
-// Bring back signed-in playback for age-restricted videos if it was set up before.
-resumeSignedIn();
+// Accounts linked before backends were separate services move to their backend.
+scheduleMigration();
 
 serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, ({ port }) => {
   console.log(`API on http://127.0.0.1:${port}/api  (app origin ${config.publicUrl.origin})`);
-  if (!config.google.configured) console.log("Google OAuth not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to link accounts.");
+  console.log(`Backends: ${config.backends.map((b) => `${b.slug} (${b.url})`).join(", ") || "none"}`);
+  if (!config.backendToken) console.warn("BACKEND_TOKEN isn't set: backends will refuse every request.");
   if (config.oidc.enabled) console.log(`Sign-in: OIDC only (${config.oidc.name}, ${config.oidc.issuer}); password and passkey sign-in are disabled.`);
 });

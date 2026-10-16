@@ -23,55 +23,67 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useData } from "@/hooks/use-data";
+import { PageHeader, ServicePills } from "@/components/page-header";
+import { ServiceMark } from "@/components/service-mark";
+import { itemKey, paths } from "@/lib/paths";
 import { useSource } from "@/lib/source";
-import { accountActions, useAccounts } from "@/lib/session";
+import { accountActions, backendName, useAccounts } from "@/lib/session";
 import { actions, useStore } from "@/lib/store";
 import type { Channel, LinkedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
 
 export function SubscriptionsPage() {
-  useTitle("Your channels");
+  useTitle("Following");
   const source = useSource();
-  const { inFeed } = useAccounts();
+  const { inFeed, feedBackends } = useAccounts();
   const [reload, setReload] = useState(0);
-  const state = useData(() => source.subscriptions(), [source.key, reload]);
+  const state = useData(() => source.following(), [source.key, reload]);
   const [overrides, setOverrides] = useState<Record<string, string | null>>({});
+  const keyOf = (c: Channel) => itemKey({ backend: c.backend, id: c.id });
   const groups = useMemo(
-    () => [...new Set((state.data ?? []).map((c) => (c.id in overrides ? overrides[c.id] : c.group)).filter((g): g is string => Boolean(g)))].sort(),
+    () => [...new Set((state.data ?? []).map((c) => (keyOf(c) in overrides ? overrides[keyOf(c)] : c.group)).filter((g): g is string => Boolean(g)))].sort(),
     [state.data, overrides],
   );
   const muted = useStore((s) => s.muted);
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("all");
+  const [service, setService] = useState("all");
 
-  const channels = useMemo(() => {
-    if (state.status !== "ready") return [];
-    return state.data
-      .map((c) => ({ ...c, group: c.id in overrides ? (overrides[c.id] ?? undefined) : c.group }))
-      .filter((c) => (group === "all" || c.group === group) && c.name.toLowerCase().includes(query.toLowerCase()))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [state, query, group, overrides]);
+  const all = useMemo(
+    () => (state.data ?? []).map((c) => ({ ...c, group: keyOf(c) in overrides ? (overrides[keyOf(c)] ?? undefined) : c.group })),
+    [state.data, overrides],
+  );
+  const channels = useMemo(
+    () =>
+      all
+        .filter((c) => (service === "all" || c.backend === service) && (group === "all" || c.group === group) && c.name.toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [all, query, group, service],
+  );
+  const shows = channels.filter((c) => c.kind === "series");
+  const plain = channels.filter((c) => c.kind !== "series");
+  const youtube = all.filter((c) => c.backend === "youtube");
+  const setGroupFor = (channel: Channel, g: string | null) => {
+    setOverrides((o) => ({ ...o, [keyOf(channel)]: g }));
+    source.setGroup(channel, g).catch((e: Error) => toast.error("Couldn't save the group", { description: e.message }));
+  };
 
   return (
     <div className="relative">
       <div className="page relative">
-        <header className="flex flex-wrap items-end gap-4">
-          <div className="flex-1">
-            <h1 className="font-display text-3xl font-semibold sm:text-4xl">Your channels</h1>
-            <p className="text-muted-foreground mt-2 max-w-xl">
-              Every channel from your {inFeed.length} feed {inFeed.length === 1 ? "account" : "accounts"}, merged into one list. Group them, hide the noisy ones, or
-              export everything — your feed is built only from this list.
-            </p>
-          </div>
-          <div className="flex gap-2">
+        <PageHeader
+          title="Following"
+          description={`Every channel and show from your ${inFeed.length} feed ${inFeed.length === 1 ? "account" : "accounts"}, merged into one list. Group them, hide the noisy ones, or export them. Your feed is built only from this list.`}
+          actions={
+            <>
             <Button
               variant="outline"
               className="rounded-full"
               onClick={() =>
                 toast.promise(Promise.all(inFeed.map((a) => accountActions.sync(a.id))).then(() => setReload((n) => n + 1)), {
-                  loading: "Syncing with YouTube…",
-                  success: "Subscriptions synced",
+                  loading: "Syncing your accounts…",
+                  success: "Synced",
                   error: (e: Error) => `Sync failed: ${e.message}`,
                 })
               }
@@ -80,20 +92,20 @@ export function SubscriptionsPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="rounded-full" disabled={!state.data?.length}>
+                <Button variant="outline" className="rounded-full" disabled={!youtube.length}>
                   <Download /> Export
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>Take your subscriptions anywhere</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={() => download("subscriptions.opml", opml(state.data ?? []), "text/x-opml")}>
+                <DropdownMenuLabel>Take your YouTube subscriptions anywhere</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => download("subscriptions.opml", opml(youtube), "text/x-opml")}>
                   <Download /> OPML (feed readers, FreeTube)
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() =>
                     download(
                       "newpipe-subscriptions.json",
-                      JSON.stringify({ app_version: "0.24.0", app_version_int: 990, subscriptions: (state.data ?? []).map((c) => ({ service_id: 0, url: `https://www.youtube.com/channel/${c.id}`, name: c.name })) }, null, 2),
+                      JSON.stringify({ app_version: "0.24.0", app_version_int: 990, subscriptions: youtube.map((c) => ({ service_id: 0, url: `https://www.youtube.com/channel/${c.id}`, name: c.name })) }, null, 2),
                       "application/json",
                     )
                   }
@@ -102,16 +114,31 @@ export function SubscriptionsPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-        </header>
+            </>
+          }
+        />
 
-        <div className="mt-8 flex flex-wrap items-center gap-3">
+        {feedBackends.length > 1 && (
+          <ServicePills
+            className="mt-8"
+            label="Service"
+            value={service}
+            onChange={setService}
+            options={[
+              { value: "all", label: "Everything", count: all.length },
+              ...feedBackends.map((b) => ({ value: b.slug, label: backendName(b), color: b.info?.color, count: all.filter((c) => c.backend === b.slug).length })),
+            ]}
+          />
+        )}
+
+        <div className={cn("flex flex-wrap items-center gap-3", feedBackends.length > 1 ? "mt-4" : "mt-8")}>
           <InputGroup className="h-9 w-full max-w-xs rounded-full">
             <InputGroupAddon>
               <Search />
             </InputGroupAddon>
-            <InputGroupInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter channels" aria-label="Filter channels" />
+            <InputGroupInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter" aria-label="Filter channels and shows" />
           </InputGroup>
+{groups.length > 0 && (
           <ToggleGroup type="single" value={group} onValueChange={(v) => v && setGroup(v)} spacing={1} className="no-scrollbar max-w-full overflow-x-auto">
             {["all", ...groups].map((g) => (
               <ToggleGroupItem
@@ -123,30 +150,115 @@ export function SubscriptionsPage() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
+          )}
         </div>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {state.status === "loading" &&
-            Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}
-          {channels.map((channel) => (
-            <ChannelTile
-              key={channel.id}
-              channel={channel}
-              muted={muted.includes(channel.id)}
-              groups={groups}
-              onGroup={(g) => {
-                setOverrides((o) => ({ ...o, [channel.id]: g }));
-                source.setGroup(channel.id, g).catch((e: Error) => toast.error("Couldn't save the group", { description: e.message }));
-              }}
-            />
-          ))}
-        </div>
+        {shows.length > 0 && (
+          <section className="mt-8" aria-labelledby="shows">
+            <h2 id="shows" className="font-display mb-4 text-xl font-semibold">
+              Shows <span className="text-muted-foreground text-sm font-normal">{shows.length}</span>
+            </h2>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {shows.map((show) => (
+                <ShowTile key={keyOf(show)} show={show} muted={muted.includes(keyOf(show))} groups={groups} onGroup={(g) => setGroupFor(show, g)} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {(plain.length > 0 || state.status === "loading") && (
+          <section className="mt-8" aria-labelledby="channels">
+            {shows.length > 0 && (
+              <h2 id="channels" className="font-display mb-4 text-xl font-semibold">
+                Channels <span className="text-muted-foreground text-sm font-normal">{plain.length}</span>
+              </h2>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {state.status === "loading" && Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}
+              {plain.map((channel) => (
+                <ChannelTile key={keyOf(channel)} channel={channel} muted={muted.includes(keyOf(channel))} groups={groups} onGroup={(g) => setGroupFor(channel, g)} />
+              ))}
+            </div>
+          </section>
+        )}
+        {state.status === "ready" && channels.length === 0 && <p className="text-muted-foreground mt-10 text-sm">Nothing matches.</p>}
       </div>
     </div>
   );
 }
 
-function ChannelTile({ channel, muted, groups, onGroup }: { channel: Channel; muted: boolean; groups: string[]; onGroup: (group: string | null) => void }) {
+type TileProps = { muted: boolean; groups: string[]; onGroup: (group: string | null) => void };
+
+/** Hide, group, and open-on-service actions shared by channel and show tiles. */
+function TileMenu({ channel, muted, groups, onGroup, className }: TileProps & { channel: Channel; className?: string }) {
+  const { bySlug } = useAccounts();
+  const info = bySlug(channel.backend)?.info;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" className={cn("relative z-10", className)} aria-label={`Options for ${channel.name}`}>
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onSelect={() => actions.toggleMute(itemKey({ backend: channel.backend, id: channel.id }))}>
+          {muted ? <Eye /> : <EyeOff />}
+          {muted ? "Show in feed" : "Hide from feed"}
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>Move to group</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup value={channel.group ?? ""} onValueChange={(g) => onGroup(g || null)}>
+              {[...new Set([...groups, ...suggestedGroups])].sort().map((g) => (
+                <DropdownMenuRadioItem key={g} value={g}>
+                  {g}
+                </DropdownMenuRadioItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioItem value="">No group</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {info?.urls.channel && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href={info.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on {info.name}
+              </a>
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** A show: portrait key art with its name under it. */
+function ShowTile({ show, ...menu }: TileProps & { show: Channel }) {
+  return (
+    <article className={cn("group/card relative", menu.muted && "opacity-60")}>
+      <Link to={paths.channel(show)} className="block">
+        <div className="bg-muted relative aspect-[2/3] overflow-hidden rounded-xl">
+          {show.poster && <img src={show.poster} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover/card:scale-[1.03]" />}
+          {show.unseen > 0 && (
+            <span className="bg-brand text-brand-foreground absolute top-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase">New</span>
+          )}
+        </div>
+        <p className="mt-2 line-clamp-2 text-sm leading-snug font-semibold">{show.name}</p>
+      </Link>
+      <div className="mt-1 flex items-center gap-2">
+        <ServiceMark backend={show.backend} label className="text-muted-foreground text-xs" />
+        {show.group && <Badge variant="secondary">{show.group}</Badge>}
+        {menu.muted && <Badge variant="outline">Hidden</Badge>}
+        <TileMenu channel={show} {...menu} className="ml-auto -mr-1.5 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100" />
+      </div>
+    </article>
+  );
+}
+
+function ChannelTile({ channel, ...menu }: TileProps & { channel: Channel }) {
+  const { muted } = menu;
   const { byId } = useAccounts();
   const via = (channel.via ?? []).map(byId).filter((a): a is LinkedAccount => a !== undefined);
   return (
@@ -154,51 +266,20 @@ function ChannelTile({ channel, muted, groups, onGroup }: { channel: Channel; mu
       <div className="flex items-start gap-3">
         <ChannelAvatar name={channel.name} src={channel.avatar} ring={channel.unseen > 0} className="size-12" textClassName="text-sm" />
         <div className="min-w-0 flex-1">
-          <Link to={`/channel/${channel.id}`} className="block truncate font-semibold after:absolute after:inset-0 hover:underline">
+          <Link to={paths.channel(channel)} className="block truncate font-semibold after:absolute after:inset-0 hover:underline">
             {channel.name}
           </Link>
           <p className="text-muted-foreground truncate text-xs">
-            {channel.unseen > 0 ? `${channel.unseen} new in 48h` : "No new videos"}
+            {channel.unseen > 0 ? `${channel.unseen} new in 48h` : "Nothing new"}
           </p>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="relative z-10" aria-label={`Options for ${channel.name}`}>
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onSelect={() => actions.toggleMute(channel.id)}>
-              {muted ? <Eye /> : <EyeOff />}
-              {muted ? "Show in feed" : "Hide from feed"}
-            </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Move to group</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                <DropdownMenuRadioGroup value={channel.group ?? ""} onValueChange={(g) => onGroup(g || null)}>
-                  {[...new Set([...groups, ...suggestedGroups])].sort().map((g) => (
-                    <DropdownMenuRadioItem key={g} value={g}>
-                      {g}
-                    </DropdownMenuRadioItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuRadioItem value="">No group</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <a href={`https://www.youtube.com/channel/${channel.id}`} target="_blank" rel="noreferrer noopener">
-                <ExternalLink /> Manage on YouTube
-              </a>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <TileMenu channel={channel} {...menu} />
       </div>
-            <div className="mt-auto flex items-center gap-2">
+      <div className="mt-auto flex items-center gap-2">
+        <ServiceMark backend={channel.backend} />
         {channel.group && <Badge variant="secondary">{channel.group}</Badge>}
         {muted && <Badge variant="outline">Hidden</Badge>}
-        <span className="ml-auto flex -space-x-1.5" title={`Subscribed with ${via.map((a) => a.label).join(", ")}`}>
+        <span className="ml-auto flex -space-x-1.5" title={`Followed with ${via.map((a) => a.label).join(", ")}`}>
           {via.map((a) => (
             <AccountAvatar key={a.id} account={a} className="ring-card size-6 ring-2" textClassName="text-[9px]" />
           ))}

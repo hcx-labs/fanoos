@@ -5,7 +5,8 @@ import { ChannelAvatar } from "@/components/channel-avatar";
 import { useVideoTitle } from "@/components/video-card";
 import { Button } from "@/components/ui/button";
 import { formatAgo, formatDuration, formatViews } from "@/lib/format";
-import { paths } from "@/lib/paths";
+import { itemKey, paths } from "@/lib/paths";
+import { episodeLabel } from "@/components/service-mark";
 import { actions, useStore } from "@/lib/store";
 import type { Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,9 @@ export function pickHeroVideos(videos: Video[], count = 5) {
   const seen = new Set<string>();
   const picks: Video[] = [];
   for (const video of videos) {
-    if (seen.has(video.channelId) || video.upcoming) continue;
-    seen.add(video.channelId);
+    const source = `${video.backend}:${video.channelId}`;
+    if (seen.has(source) || video.upcoming) continue;
+    seen.add(source);
     picks.push(video);
     if (picks.length === count) break;
   }
@@ -92,10 +94,10 @@ export function Hero({ videos }: { videos: Video[] }) {
           <div className="absolute inset-0 -z-10 bg-gradient-to-t from-black/90 via-black/45 to-black/5" />
           <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black/70 via-black/20 to-transparent" />
 
-          <div key={video.id} className="animate-in fade-in slide-in-from-bottom-3 absolute inset-x-0 bottom-0 p-5 text-white duration-700 sm:p-8 lg:p-10">
+          <div key={itemKey(video)} className="animate-in fade-in slide-in-from-bottom-3 absolute inset-x-0 bottom-0 p-5 text-white duration-700 sm:p-8 lg:p-10">
             <div className="flex items-center gap-2.5 text-sm">
               <ChannelAvatar name={video.channelName} src={video.channelAvatar} className="size-8 ring-2 ring-white/20" textClassName="text-[11px]" />
-              <Link to={paths.channel(video.channelId)} className="font-semibold hover:underline">
+              <Link to={paths.channelOf(video)} className="font-semibold hover:underline">
                 {video.channelName}
               </Link>
               {formatAgo(video.published) && (
@@ -108,7 +110,11 @@ export function Hero({ videos }: { videos: Video[] }) {
             <HeroTitle video={video} />
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
               {video.duration > 0 && <span className="rounded-md bg-white/15 px-2 py-1 tabular-nums backdrop-blur">{formatDuration(video.duration)}</span>}
-              {video.views > 0 && <span className="rounded-md bg-white/15 px-2 py-1 backdrop-blur">{formatViews(video)}</span>}
+              {video.episode ? (
+                episodeLabel(video.episode) && <span className="rounded-md bg-white/15 px-2 py-1 backdrop-blur">{episodeLabel(video.episode)}</span>
+              ) : (
+                video.views > 0 && <span className="rounded-md bg-white/15 px-2 py-1 backdrop-blur">{formatViews(video)}</span>
+              )}
               {video.live && <span className="rounded-md bg-red-600 px-2 py-1 uppercase">Live</span>}
             </div>
             {teaser(video.description) && <p className="mt-3 line-clamp-2 max-w-xl text-sm text-white/80">{teaser(video.description)}</p>}
@@ -183,13 +189,13 @@ function HeroTitle({ video }: { video: Video }) {
 }
 
 function SaveButton({ video }: { video: Video }) {
-  const later = useStore((s) => s.watchLater.includes(video.id));
+  const later = useStore((s) => s.watchLater.includes(itemKey(video)));
   return (
     <Button
       size="lg"
       variant="outline"
       aria-pressed={later}
-      onClick={() => actions.toggleWatchLater(video.id)}
+      onClick={() => actions.toggleWatchLater(itemKey(video))}
       className="rounded-full border-white/30 bg-white/10 px-5 text-white backdrop-blur hover:bg-white/20 hover:text-white dark:border-white/30 dark:bg-white/10 dark:hover:bg-white/20"
     >
       {later ? <CircleCheck /> : <Clock3 />} {later ? "Saved" : "Watch later"}
@@ -214,7 +220,7 @@ function QueueItem({ video, active, running, onSelect }: { video: Video; active:
       {active && (
         <span className="bg-border absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full">
           <span
-            key={`${video.id}-${running}`}
+            key={`${itemKey(video)}-${running}`}
             className="bg-brand block h-full origin-left"
             style={{
               animation: running ? `hero-progress ${ROTATE_MS}ms linear forwards` : undefined,

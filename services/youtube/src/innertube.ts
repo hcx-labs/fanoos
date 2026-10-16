@@ -7,9 +7,9 @@
  */
 import { Innertube } from "youtubei.js";
 import type { Channel, Comment, CommentPage, CommentSort, SearchFilters, SearchResults, Video } from "@tube/shared";
-import { TtlCache } from "../cache.ts";
-import { randomToken } from "../crypto.ts";
-import { proxyImage } from "../media.ts";
+import { TtlCache } from "./cache.ts";
+import { randomToken } from "./crypto.ts";
+import { proxyImage } from "./media.ts";
 import { ago, chaptersFrom, clock, count, isRounded, text, thumb } from "./parse.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

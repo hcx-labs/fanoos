@@ -5,10 +5,11 @@
   "type": "module",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "services/*"
   ],
   "scripts": {
-    "dev": "npm run redis & npm run companion & npm run dev --workspace @tube/server & npm run dev --workspace @tube/web",
+    "dev": "npm run redis & npm run companion & npm run dev --workspace @fanoos/youtube & npm run dev --workspace @fanoos/crunchyroll & npm run dev --workspace @tube/server & npm run dev --workspace @tube/web",
     "build": "npm run build --workspace @tube/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "companion": "scripts/companion.sh",
@@ -17,5 +18,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "license": "AGPL-3.0-or-later"
 }

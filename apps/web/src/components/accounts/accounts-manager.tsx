@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, Pencil, Plus, RefreshCw, Server, Star, Trash2, TriangleAlert, UserPlus, Zap } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, RefreshCw, Star, Trash2, TriangleAlert, UserPlus, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { ConnectAccount } from "@/components/accounts/connect-account";
@@ -16,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { accountActions, useAccounts } from "@/lib/session";
+import { accountActions, backendName, useAccounts } from "@/lib/session";
+import { cn } from "@/lib/utils";
 import type { Backend, LinkedAccount } from "@/lib/types";
 
 type Editing = { type: "backend"; backend: Backend } | { type: "account"; account: LinkedAccount } | null;
@@ -25,7 +26,13 @@ const failed = (action: string) => (error: unknown) => toast.error(`Couldn't ${a
 
 export function AccountsManager() {
   const { backends, accounts, active } = useAccounts();
-  const [adding, setAdding] = useState<{ backendId?: string } | null>(null);
+  const [adding, setAdding] = useState<{ backendId?: string; relink?: { backendId: string; accountId: string; write: boolean } } | null>(null);
+  // Re-linking (or allowing actions): redirect services leave the page; code-based ones open the dialog.
+  const relink = async (backendId: string, accountId: string, write: boolean) => {
+    const b = backends.find((x) => x.id === backendId);
+    if (b?.info?.link.method === "device") return setAdding({ relink: { backendId, accountId, write } });
+    await accountActions.link(backendId, "settings", { write, accountId }).catch(failed("start linking"));
+  };
   const [editing, setEditing] = useState<Editing>(null);
 
   return (
@@ -35,22 +42,24 @@ export function AccountsManager() {
         return (
           <section key={backend.id} className="bg-card overflow-hidden rounded-2xl border" aria-label={backend.label}>
             <header className="bg-muted/40 flex items-center gap-3 border-b px-4 py-3">
-              <span className="bg-background grid size-9 place-items-center rounded-lg border">
-                <Server className="size-4" />
+              <span className="grid size-9 place-items-center rounded-lg text-sm font-bold text-white" style={{ background: backend.info?.color ?? "var(--muted-foreground)" }}>
+                {backendName(backend).slice(0, 1)}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 text-sm font-semibold">
-                  {backend.label}
-                  <Badge variant="outline" className="text-[10px]">
-                    YouTube
-                  </Badge>
+                  {backendName(backend)}
+                  {backend.info && !backend.info.private && (
+                    <Badge variant="outline" className="text-[10px]" title={`${backendName(backend)} sees what you watch there`}>
+                      Signed in
+                    </Badge>
+                  )}
                 </p>
                 <p className="text-muted-foreground flex items-center gap-1.5 truncate text-xs">
-                  <span className="bg-like size-1.5 rounded-full" aria-hidden />
-                  {backend.url.replace(/^https?:\/\//, "")}
+                  <span className={cn("size-1.5 rounded-full", backend.info ? "bg-like" : "bg-dislike")} aria-hidden />
+                  {backend.info ? `${backend.label} · ${backend.info.link.method === "device" ? "signs in with a code" : "signs in on its own page"}` : "Backend isn't reachable"}
                 </p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setAdding({ backendId: backend.id })}>
+              <Button variant="ghost" size="sm" disabled={!backend.info} onClick={() => setAdding({ backendId: backend.id })}>
                 <UserPlus /> <span className="hidden sm:inline">Link account</span>
               </Button>
               <Button variant="ghost" size="icon-sm" aria-label={`Rename ${backend.label}`} onClick={() => setEditing({ type: "backend", backend })}>
@@ -76,22 +85,22 @@ export function AccountsManager() {
                         <Badge
                           variant="outline"
                           className="text-[10px]"
-                          title={account.canWrite ? "Can subscribe, like and comment" : "Can read subscriptions and playlists only"}
+                          title={account.canWrite ? "Can act as the account" : "Can read only"}
                         >
-                          {account.canWrite ? "Can act" : "Read-only"}
+                          {account.plan ?? (account.canWrite ? "Can act" : "Read-only")}
                         </Badge>
                       </p>
                       <p className="text-muted-foreground truncate text-xs">
                         {account.name} · {account.email}
                       </p>
                     </div>
-                    {!account.needsRelink && !account.canWrite && (
-                      <Button variant="outline" size="sm" onClick={() => accountActions.link(account.backendId, "settings", { write: true, accountId: account.id })}>
+                    {!account.needsRelink && !account.canWrite && backend.info?.link.writeOption && (
+                      <Button variant="outline" size="sm" onClick={() => void relink(account.backendId, account.id, true)}>
                         <Zap /> Allow actions
                       </Button>
                     )}
                     {account.needsRelink ? (
-                      <Button variant="outline" size="sm" onClick={() => accountActions.link(account.backendId)}>
+                      <Button variant="outline" size="sm" onClick={() => void relink(account.backendId, account.id, false)}>
                         <TriangleAlert className="text-brand-strong" /> Link again
                       </Button>
                     ) : (
@@ -137,7 +146,7 @@ export function AccountsManager() {
                           onSelect={() =>
                             accountActions
                               .remove(account.id)
-                              .then(() => toast(`Unlinked ${account.label}`, { description: "Access was revoked at Google too." }))
+                              .then(() => toast(`Unlinked ${account.label}`, { description: `Access was revoked at ${backendName(backend)} too.` }))
                               .catch(failed("unlink the account"))
                           }
                         >
@@ -161,9 +170,9 @@ export function AccountsManager() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Link an account</DialogTitle>
-            <DialogDescription>You'll sign in on Google's page, then come back here.</DialogDescription>
+            <DialogDescription>Sign in on the service's own site. Fanoos never sees your password.</DialogDescription>
           </DialogHeader>
-          {adding && <ConnectAccount backendId={adding.backendId} />}
+          {adding && <ConnectAccount backendId={adding.backendId ?? adding.relink?.backendId} relink={adding.relink} onLinked={() => setAdding(null)} />}
         </DialogContent>
       </Dialog>
 

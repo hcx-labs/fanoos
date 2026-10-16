@@ -1,0 +1,21 @@
+{
+  "name": "@fanoos/kit",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Shared runtime for Fanoos backend services. Imported by relative path (Node won't strip types inside node_modules).",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@tube/shared": "*",
+    "hono": "^4.13.13",
+    "redis": "^6.3.0"
+  },
+  "license": "AGPL-3.0-or-later"
+}

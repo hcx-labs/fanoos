@@ -4,8 +4,8 @@
  * prefix, so those services never learn which video is being watched.
  */
 import type { Segment, SegmentCategory } from "@tube/shared";
-import { SharedCache } from "../cache.ts";
-import { sha256 } from "../crypto.ts";
+import { SharedCache } from "./cache.ts";
+import { sha256 } from "./crypto.ts";
 
 const categories: SegmentCategory[] = ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "filler", "music_offtopic"];
 

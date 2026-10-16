@@ -7,7 +7,6 @@ import {
   Laptop,
   LibraryBig,
   LogOut,
-  Server,
   Star,
   UserPlus,
   Moon,
@@ -42,14 +41,14 @@ import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useScrolled } from "@/hooks/use-scrolled";
 import { brand } from "@/lib/brand";
-import { accountActions, authActions, useAccounts, useProfile } from "@/lib/session";
+import { accountActions, authActions, backendName, useAccounts, useProfile } from "@/lib/session";
 import { useSettings } from "@/lib/store";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 export const nav = [
   { to: "/", label: "Home", icon: House, end: true },
-  { to: "/subscriptions", label: "Channels", icon: UsersRound },
+  { to: "/following", label: "Following", icon: UsersRound },
   { to: "/library", label: "Library", icon: LibraryBig },
 ];
 
@@ -78,9 +77,11 @@ export function TopBar({ onSearch }: { onSearch: () => void }) {
   const scrolled = useScrolled();
   return (
     <header data-scrolled={scrolled || undefined} className="top-bar sticky top-0 z-40">
-      <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-6">
+      {/* Three columns from md up: equal-width sides keep the search box at the true centre of the window. */}
+      <div className="flex h-16 items-center gap-3 px-4 sm:px-6 md:grid md:grid-cols-[1fr_minmax(0,28rem)_1fr] lg:px-6">
+        <div className="flex min-w-0 items-center">
         <Link to="/" className="flex shrink-0 items-center rounded-lg" aria-label={`${brand.name} home`}>
-          <Logo className="lg:w-52" />
+          <Logo />
         </Link>
 
         <nav aria-label="Primary" className="ml-4 hidden items-center gap-1 md:flex lg:hidden">
@@ -100,18 +101,19 @@ export function TopBar({ onSearch }: { onSearch: () => void }) {
             </NavLink>
           ))}
         </nav>
+        </div>
 
         <button
           type="button"
           onClick={onSearch}
-          className="bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground ml-auto flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-full border px-4 text-sm transition-colors sm:max-w-md md:mx-auto"
+          className="bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground ml-auto flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-full border px-4 text-sm transition-colors sm:max-w-md md:ml-0 md:w-full md:max-w-none"
         >
           <Search className="size-4" />
-          <span className="truncate">Search<span className="hidden sm:inline"> videos and channels</span></span>
+          <span className="truncate">Search<span className="hidden sm:inline"> everything</span></span>
           <Kbd className="ml-auto hidden sm:inline-flex">⌘K</Kbd>
         </button>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 md:justify-self-end">
           <PrivacyStatus />
           <AccountMenu />
         </div>
@@ -122,11 +124,18 @@ export function TopBar({ onSearch }: { onSearch: () => void }) {
 
 function PrivacyStatus() {
   const settings = useSettings();
-  const { accounts, backends } = useAccounts();
+  const { accounts, feedBackends, backends } = useAccounts();
+  const used = feedBackends.length ? feedBackends : backends.filter((b) => b.slug === "youtube");
+  // Services that only work signed in (Crunchyroll) see what's watched there; say so plainly.
+  const open = used.filter((b) => b.info && !b.info.private);
   const rows = [
-    { label: "Linked accounts", value: `${accounts.length} on ${backends.length} ${backends.length === 1 ? "backend" : "backends"}`, ok: true },
+    { label: "Linked accounts", value: `${accounts.length} across ${used.length} ${used.length === 1 ? "service" : "services"}`, ok: true },
     { label: "Ads", value: "Blocked", ok: true },
-    { label: "Tracking", value: "None sent", ok: true },
+    ...used.map((b) => ({
+      label: backendName(b),
+      value: b.info?.private === false ? "Sees what you watch there" : "Can't see you",
+      ok: b.info?.private !== false,
+    })),
     { label: "Video traffic", value: "Proxied", ok: true },
     { label: "Sponsors", value: `${Object.values(settings.segments).filter((a) => a === "skip").length} types skipped`, ok: true },
     { label: "Watch history", value: settings.keepHistory ? "Your account only" : "Off", ok: true },
@@ -144,8 +153,12 @@ function PrivacyStatus() {
             <ShieldCheck className="size-5" />
           </div>
           <div>
-            <p className="font-display text-base font-semibold">You're watching privately</p>
-            <p className="text-muted-foreground text-xs">Google sees your backends, not you.</p>
+            <p className="font-display text-base font-semibold">{open.length ? "Private where it can be" : "You're watching privately"}</p>
+            <p className="text-muted-foreground text-xs">
+              {open.length
+                ? `${open.map(backendName).join(" and ")} ${open.length === 1 ? "needs" : "need"} your account, so ${open.length === 1 ? "it sees" : "they see"} what you watch there.`
+                : "Google sees your server, not you."}
+            </p>
           </div>
         </div>
         <ul className="space-y-2.5 p-4">
@@ -208,7 +221,7 @@ function AccountMenu() {
           return (
             <DropdownMenuGroup key={backend.id}>
               <DropdownMenuLabel className="text-muted-foreground flex items-center gap-1.5 pt-2 text-[11px] font-medium">
-                <Server className="size-3" /> {backend.label}
+                <span className="size-2 rounded-full" style={{ background: backend.info?.color ?? "currentColor" }} /> {backendName(backend)}
               </DropdownMenuLabel>
               {list.map((account) => (
                 <DropdownMenuCheckboxItem
@@ -233,12 +246,12 @@ function AccountMenu() {
         })}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate("/settings#accounts")}>
-          <UserPlus /> {accounts.length ? "Link or manage accounts" : "Link a YouTube account"}
+          <UserPlus /> {accounts.length ? "Link or manage accounts" : "Link an account"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem onSelect={() => navigate("/subscriptions")}>
-            <Tv /> Manage channels
+          <DropdownMenuItem onSelect={() => navigate("/following")}>
+            <Tv /> Manage what you follow
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => navigate("/settings")}>
             <Settings /> Settings

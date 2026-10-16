@@ -4,8 +4,8 @@
 #   scripts/companion.sh             anonymous instance: streams every video, signed out
 #   scripts/companion.sh signed-in   signed-in instance: used only for age-restricted videos
 #
-# Both listen on 127.0.0.1 only; the API server talks to them and proxies media to browsers.
-# Settings come from apps/server/.env (COMPANION_*).
+# Both listen on 127.0.0.1 only; the YouTube backend (services/youtube) talks to them and proxies
+# media to browsers. Settings come from services/youtube/.env (COMPANION_*).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -17,16 +17,16 @@ fi
 
 set -a
 # shellcheck disable=SC1091
-[ -f apps/server/.env ] && . apps/server/.env
+[ -f services/youtube/.env ] && . services/youtube/.env
 set +a
 
-: "${COMPANION_SECRET:?Set COMPANION_SECRET (exactly 16 characters) in apps/server/.env}"
+: "${COMPANION_SECRET:?Set COMPANION_SECRET (exactly 16 characters) in services/youtube/.env}"
 export SERVER_SECRET_KEY="$COMPANION_SECRET"
 export HOST="127.0.0.1"
 
 # Each instance keeps its YouTube session in its own folder, so a sign-in never leaks
 # into the anonymous instance.
-cache="${COMPANION_CACHE_ROOT:-$root/apps/server/data}/companion-$mode"
+cache="${COMPANION_CACHE_ROOT:-$root/services/youtube/data}/companion-$mode"
 mkdir -p "$cache"
 export CACHE_DIRECTORY="$cache"
 

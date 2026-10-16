@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { Layout } from "@/components/shell/layout";
 import { ChannelPage } from "@/pages/channel";
 import { HomePage } from "@/pages/home";
@@ -23,6 +23,13 @@ function RequireProfile({ children }: { children: React.ReactNode }) {
   return session.status === "ready" ? children : <Navigate to="/welcome" replace />;
 }
 
+/** Links from before items named their backend (/watch/<id>, /channel/<id>) are YouTube ones. */
+function Legacy({ to }: { to: "watch" | "channel" }) {
+  const { id = "" } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/${to}/youtube/${id}${search}`} replace />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -35,10 +42,13 @@ export function App() {
         }
       >
         <Route index element={<HomePage />} />
-        <Route path="/watch/:id" element={<WatchPage />} />
+        <Route path="/watch/:backend/:id" element={<WatchPage />} />
+        <Route path="/watch/:id" element={<Legacy to="watch" />} />
         <Route path="/search" element={<SearchPage />} />
-        <Route path="/channel/:id" element={<ChannelPage />} />
-        <Route path="/subscriptions" element={<SubscriptionsPage />} />
+        <Route path="/channel/:backend/:id" element={<ChannelPage />} />
+        <Route path="/channel/:id" element={<Legacy to="channel" />} />
+        <Route path="/following" element={<SubscriptionsPage />} />
+        <Route path="/subscriptions" element={<Navigate to="/following" replace />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

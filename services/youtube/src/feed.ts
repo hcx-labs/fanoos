@@ -7,10 +7,10 @@
  */
 import { XMLParser } from "fast-xml-parser";
 import type { Channel, Video } from "@tube/shared";
-import { mapLimit, SharedCache } from "../cache.ts";
-import { db } from "../db.ts";
-import { fetchSubscriptions, fetchVideoStats, RelinkRequired, type VideoStats } from "../google.ts";
-import { proxyImage } from "../media.ts";
+import { mapLimit, SharedCache } from "./cache.ts";
+import { db } from "./db.ts";
+import { fetchSubscriptions, fetchVideoStats, RelinkRequired, type VideoStats } from "./google.ts";
+import { proxyImage } from "./media.ts";
 import { communityTitle } from "./extras.ts";
 import { channelPage } from "./innertube.ts";
 import { thumb } from "./parse.ts";
@@ -18,19 +18,17 @@ import { thumb } from "./parse.ts";
 const SYNC_EVERY = 6 * 36e5;
 const NEW_WINDOW = 48 * 36e5;
 
-type FeedAccount = { id: string; synced_at: number };
-
 /** Refresh an account's subscription list from Google when it's stale. */
-export async function syncSubscriptions(accountId: string, force = false) {
-  const row = db.prepare("SELECT synced_at FROM accounts WHERE id = ?").get(accountId) as { synced_at: number } | undefined;
+export async function syncSubscriptions(ref: string, force = false) {
+  const row = db.prepare("SELECT synced_at FROM accounts WHERE ref = ?").get(ref) as { synced_at: number } | undefined;
   if (!row || (!force && Date.now() - row.synced_at < SYNC_EVERY)) return;
-  const subs = await fetchSubscriptions(accountId);
+  const subs = await fetchSubscriptions(ref);
   db.exec("BEGIN");
   try {
-    db.prepare("DELETE FROM subscriptions WHERE account_id = ?").run(accountId);
-    const insert = db.prepare("INSERT OR IGNORE INTO subscriptions (account_id, channel_id, title, avatar) VALUES (?, ?, ?, ?)");
-    for (const s of subs) insert.run(accountId, s.channelId, s.title, s.avatar ?? null);
-    db.prepare("UPDATE accounts SET synced_at = ? WHERE id = ?").run(Date.now(), accountId);
+    db.prepare("DELETE FROM subscriptions WHERE account_ref = ?").run(ref);
+    const insert = db.prepare("INSERT OR IGNORE INTO subscriptions (account_ref, channel_id, title, avatar) VALUES (?, ?, ?, ?)");
+    for (const s of subs) insert.run(ref, s.channelId, s.title, s.avatar ?? null);
+    db.prepare("UPDATE accounts SET synced_at = ? WHERE ref = ?").run(Date.now(), ref);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -38,48 +36,45 @@ export async function syncSubscriptions(accountId: string, force = false) {
   }
 }
 
-function feedAccounts(userId: string, accountId?: string): FeedAccount[] {
+/** The usable accounts among the refs core asked for. */
+function usable(refs: string[]): string[] {
+  if (!refs.length) return [];
   const rows = db
-    .prepare("SELECT id, synced_at FROM accounts WHERE user_id = ? AND in_feed = 1 AND needs_relink = 0 ORDER BY created_at")
-    .all(userId) as FeedAccount[];
-  return accountId ? rows.filter((a) => a.id === accountId) : rows;
+    .prepare(`SELECT ref FROM accounts WHERE needs_relink = 0 AND ref IN (${refs.map(() => "?").join(",")})`)
+    .all(...refs) as { ref: string }[];
+  const ok = new Set(rows.map((r) => r.ref));
+  return refs.filter((r) => ok.has(r));
 }
 
-/** Sync every feed account; one failing account doesn't block the others. */
-async function syncAll(accounts: FeedAccount[]) {
+/** Sync every account; one failing account doesn't block the others. */
+async function syncAll(refs: string[], force = false) {
   await Promise.all(
-    accounts.map((a) =>
-      syncSubscriptions(a.id).catch((error) => {
-        if (!(error instanceof RelinkRequired)) console.warn(`subscription sync failed for ${a.id}:`, (error as Error).message);
+    refs.map((ref) =>
+      syncSubscriptions(ref, force).catch((error) => {
+        if (!(error instanceof RelinkRequired)) console.warn(`subscription sync failed for ${ref}:`, (error as Error).message);
       }),
     ),
   );
 }
 
-/** Merged channel list across accounts, with the accounts each came through. */
-function mergedChannels(userId: string, accounts: FeedAccount[]): Channel[] {
-  if (!accounts.length) return [];
-  const ids = accounts.map((a) => a.id);
+/** Merged channel list across accounts, with the account refs each came through. */
+function mergedChannels(refs: string[]): (Channel & { via: string[] })[] {
+  if (!refs.length) return [];
   const rows = db
-    .prepare(
-      `SELECT s.channel_id, s.title, s.avatar, s.account_id, g.grp FROM subscriptions s
-       LEFT JOIN channel_groups g ON g.user_id = ? AND g.channel_id = s.channel_id
-       WHERE s.account_id IN (${ids.map(() => "?").join(",")})`,
-    )
-    .all(userId, ...ids) as { channel_id: string; title: string; avatar: string | null; account_id: string; grp: string | null }[];
-  const map = new Map<string, Channel>();
+    .prepare(`SELECT channel_id, title, avatar, account_ref FROM subscriptions WHERE account_ref IN (${refs.map(() => "?").join(",")})`)
+    .all(...refs) as { channel_id: string; title: string; avatar: string | null; account_ref: string }[];
+  const map = new Map<string, Channel & { via: string[] }>();
   for (const r of rows) {
     const existing = map.get(r.channel_id);
-    if (existing) existing.via!.push(r.account_id);
+    if (existing) existing.via.push(r.account_ref);
     else
       map.set(r.channel_id, {
         id: r.channel_id,
         provider: "youtube",
         name: r.title,
         avatar: proxyImage(r.avatar ?? undefined),
-        group: r.grp ?? undefined,
         unseen: 0,
-        via: [r.account_id],
+        via: [r.account_ref],
       });
   }
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -163,10 +158,10 @@ async function titles(ids: string[], budgetMs = 2500) {
   return found;
 }
 
-export async function subscriptions(userId: string): Promise<Channel[]> {
-  const accounts = feedAccounts(userId);
-  await syncAll(accounts);
-  const channels = mergedChannels(userId, accounts);
+export async function subscriptions(refs: string[], refresh = false): Promise<(Channel & { via: string[] })[]> {
+  const accounts = usable(refs);
+  await syncAll(accounts, refresh);
+  const channels = mergedChannels(accounts);
   // Count recent uploads from whatever RSS is already cached or quick to fetch.
   await mapLimit(channels, 8, async (c) => {
     const entries = await rss(c.id).catch(() => []);
@@ -175,20 +170,20 @@ export async function subscriptions(userId: string): Promise<Channel[]> {
   return channels;
 }
 
-export async function feed(userId: string, opts: { accountId?: string; group?: string; limit?: number }): Promise<Video[]> {
-  const accounts = feedAccounts(userId, opts.accountId);
+export async function feed(refs: string[], limit = 120): Promise<Video[]> {
+  const accounts = usable(refs);
   if (!accounts.length) return [];
   await syncAll(accounts);
-  const channels = mergedChannels(userId, accounts).filter((c) => !opts.group || c.group === opts.group);
+  const channels = mergedChannels(accounts);
   const perChannel = await mapLimit(channels, 8, async (c) => ({ channel: c, entries: await rss(c.id).catch(() => [] as RssEntry[]) }));
 
   const items = perChannel
     .flatMap(({ channel, entries }) => entries.filter((e) => !e.short).map((e) => ({ channel, e })))
     .sort((a, b) => b.e.published.localeCompare(a.e.published))
-    .slice(0, opts.limit ?? 120);
+    .slice(0, limit);
 
   const ids = items.map(({ e }) => e.id);
-  const [statsOf, community] = await Promise.all([enrich(accounts[0]!.id, ids), titles(ids.slice(0, 60))]);
+  const [statsOf, community] = await Promise.all([enrich(accounts[0]!, ids), titles(ids.slice(0, 60))]);
 
   return items
     .map(({ channel, e }): Video => {
@@ -216,11 +211,24 @@ export async function feed(userId: string, opts: { accountId?: string; group?: s
     .filter((v) => !(v.duration > 0 && v.duration <= 60));
 }
 
-/** Which of the user's accounts (in the feed or not) subscribe to a channel. */
-export function subscribers(userId: string, channelId: string): string[] {
+/** Which of these accounts subscribe to a channel. */
+export function followers(refs: string[], channelId: string): string[] {
+  if (!refs.length) return [];
   return (
     db
-      .prepare("SELECT s.account_id FROM subscriptions s JOIN accounts a ON a.id = s.account_id WHERE a.user_id = ? AND s.channel_id = ?")
-      .all(userId, channelId) as { account_id: string }[]
-  ).map((r) => r.account_id);
+      .prepare(`SELECT account_ref FROM subscriptions WHERE channel_id = ? AND account_ref IN (${refs.map(() => "?").join(",")})`)
+      .all(channelId, ...refs) as { account_ref: string }[]
+  ).map((r) => r.account_ref);
+}
+
+/** Channels any of these accounts follow (filters related videos). */
+export function followedSet(refs: string[]): Set<string> {
+  if (!refs.length) return new Set();
+  return new Set(
+    (
+      db.prepare(`SELECT DISTINCT channel_id FROM subscriptions WHERE account_ref IN (${refs.map(() => "?").join(",")})`).all(...refs) as {
+        channel_id: string;
+      }[]
+    ).map((r) => r.channel_id),
+  );
 }

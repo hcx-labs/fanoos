@@ -5,3 +5,4 @@ dist
 *.sqlite
 *.sqlite-*
 apps/server/data/
+services/*/data/

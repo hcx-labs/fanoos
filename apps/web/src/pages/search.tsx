@@ -8,65 +8,97 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { PageHeader, ServicePills } from "@/components/page-header";
 import { useData } from "@/hooks/use-data";
 import { formatCount } from "@/lib/format";
-import { openYouTubeLink } from "@/lib/open-link";
+import { linkTarget, openLink } from "@/lib/open-link";
 import { paths } from "@/lib/paths";
-import { parseYouTubeLink } from "@/lib/youtube-url";
+import { backendName, useAccounts } from "@/lib/session";
 import { useSource, type SearchFilters } from "@/lib/source";
 import { useTitle } from "@/hooks/use-title";
 
 const defaults: SearchFilters = { type: "all", duration: "any", uploaded: "any", sort: "relevance" };
 
 export function SearchPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const query = params.get("q") ?? "";
+  const only = params.get("in") ?? "";
   const navigate = useNavigate();
-  const link = parseYouTubeLink(query);
+  const { backends, feedBackends, bySlug } = useAccounts();
+  const link = linkTarget(query, backends);
   useTitle(query ? `${query} – Search` : "Search");
   const [filters, setFilters] = useState(defaults);
   const source = useSource();
-  // A YouTube link that reaches the search page (e.g. pasted into the address bar) opens directly.
+  // A link that reaches the search page (e.g. pasted into the address bar) opens directly.
   useEffect(() => {
-    if (link) void openYouTubeLink(link, navigate, source, true);
+    if (link) void openLink(link.url, navigate, backendName(link.backend), true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
-  const state = useData(() => source.search(query, filters), [source.key, query, filters]);
+  const state = useData(() => (link ? Promise.resolve([]) : source.search(query, filters, only || undefined)), [source.key, query, filters, only]);
   const set = <K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) => setFilters((f) => ({ ...f, [key]: value }));
   const changed = JSON.stringify(filters) !== JSON.stringify(defaults);
+  // Services that can search: the ones in use, else every searchable one.
+  const searchable = (feedBackends.length ? feedBackends : backends).filter((b) => b.info?.features.includes("search"));
+  const sections = (state.data ?? []).filter((sec) => sec.channels.length || sec.videos.length);
+  // Filters only mean something to backends that support them (YouTube today).
+  const filterable = !only || only === "youtube";
+  const open = searchable.filter((b) => b.info?.private === false && (!only || b.slug === only));
 
   return (
     <div className="page">
-      <div className="max-w-5xl">
-      <p className="text-muted-foreground text-sm">Results for</p>
-      <h1 className="font-display text-3xl font-semibold">“{query}”</h1>
-      <p className="text-muted-foreground mt-2 flex items-center gap-1.5 text-xs">
-        <ShieldCheck className="text-brand size-3.5" />
-        Searched through your backend, signed out. YouTube doesn't see who asked, and nothing is personalised.
-      </p>
+      <div>
+      <PageHeader
+        eyebrow="Results for"
+        title={`“${query}”`}
+        icon={ShieldCheck}
+        description={
+          open.length
+            ? `YouTube is searched signed out. ${open.map(backendName).join(" and ")} ${open.length === 1 ? "is" : "are"} searched as your account.`
+            : "Searched through your server, signed out. Nobody sees who asked, and nothing is personalised."
+        }
+      />
 
-      <div className="mt-6 flex flex-wrap items-center gap-2 border-b pb-4">
+      {searchable.length > 1 && (
+        <ServicePills
+          className="mt-6"
+          label="Search in"
+          value={only}
+          onChange={(slug) =>
+            setParams((p) => {
+              const next = new URLSearchParams(p);
+              if (slug) next.set("in", slug);
+              else next.delete("in");
+              return next;
+            })
+          }
+          options={[{ value: "", label: "Everything" }, ...searchable.map((b) => ({ value: b.slug, label: backendName(b), color: b.info?.color }))]}
+        />
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-b pb-4">
         <ToggleGroup type="single" value={filters.type} onValueChange={(v) => v && set("type", v as SearchFilters["type"])} spacing={1}>
           {(["all", "video", "channel"] as const).map((type) => (
             <ToggleGroupItem
               key={type}
               value={type}
-              className="data-[state=on]:bg-foreground data-[state=on]:text-background bg-secondary h-8 rounded-full px-4 text-[13px] capitalize"
+              className="data-[state=on]:bg-foreground data-[state=on]:text-background bg-secondary h-8 rounded-full px-4 text-[13px]"
             >
-              {type === "all" ? "All" : `${type}s`}
+              {type === "all" ? "All" : type === "video" ? "Videos & episodes" : "Channels & shows"}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <div className="ml-auto flex flex-wrap gap-2">
-          <Filter value={filters.uploaded} onChange={(v) => set("uploaded", v)} label="Upload date" options={{ any: "Any time", today: "Today", week: "This week", month: "This month" }} />
-          <Filter value={filters.duration} onChange={(v) => set("duration", v)} label="Duration" options={{ any: "Any length", short: "Under 3 min", medium: "3–20 min", long: "Over 20 min" }} />
-          <Filter value={filters.sort} onChange={(v) => set("sort", v)} label="Sort" options={{ relevance: "Relevance", date: "Newest", views: "Most viewed" }} />
-          {changed && (
-            <Button variant="ghost" size="sm" className="h-8" onClick={() => setFilters(defaults)}>
-              Reset
-            </Button>
-          )}
-        </div>
+        {filterable && (
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Filter value={filters.uploaded} onChange={(v) => set("uploaded", v)} label="Upload date" options={{ any: "Any time", today: "Today", week: "This week", month: "This month" }} />
+            <Filter value={filters.duration} onChange={(v) => set("duration", v)} label="Duration" options={{ any: "Any length", short: "Under 3 min", medium: "3–20 min", long: "Over 20 min" }} />
+            <Filter value={filters.sort} onChange={(v) => set("sort", v)} label="Sort" options={{ relevance: "Relevance", date: "Newest", views: "Most viewed" }} />
+            {changed && (
+              <Button variant="ghost" size="sm" className="h-8" onClick={() => setFilters(defaults)}>
+                Reset
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {state.status === "loading" && (
@@ -83,40 +115,66 @@ export function SearchPage() {
         </div>
       )}
 
-      {state.status === "ready" && (
-        <div className="mt-6 space-y-6">
-          {state.data.channels.map((channel) => (
-            <Link key={channel.id} to={paths.channel(channel)} className="hover:bg-muted/60 flex items-center gap-5 rounded-2xl p-3">
-              <div className="grid w-2/5 max-w-[22rem] place-items-center">
-                <ChannelAvatar name={channel.name} src={channel.avatar} className="size-24" textClassName="text-2xl" />
+      {state.status === "ready" &&
+        sections.map((section) => {
+          const b = bySlug(section.backend);
+          const shows = section.channels.filter((c) => c.kind === "series");
+          const channels = section.channels.filter((c) => c.kind !== "series");
+          return (
+            <section key={section.backend} className="mt-8" aria-label={backendName(b)}>
+              {sections.length > 1 && (
+                <h2 className="font-display mb-4 flex items-center gap-2 text-xl font-semibold">
+                  <span className="size-2.5 rounded-full" style={{ background: b?.info?.color }} />
+                  {backendName(b)}
+                </h2>
+              )}
+              {shows.length > 0 && (
+                <div className="no-scrollbar -mx-1 mb-8 flex gap-4 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(to_right,black_calc(100%-3rem),transparent)] pr-12">
+                  {shows.map((show) => (
+                    <Link key={show.id} to={paths.channel(show)} className="group/card w-32 shrink-0 sm:w-36">
+                      <div className="bg-muted aspect-[2/3] overflow-hidden rounded-xl">
+                        {show.poster && <img src={show.poster} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover/card:scale-[1.03]" />}
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-sm leading-snug font-semibold">{show.name}</p>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              <div className="max-w-5xl space-y-6">
+                {channels.map((channel) => (
+                  <Link key={channel.id} to={paths.channel(channel)} className="hover:bg-muted/60 flex items-center gap-5 rounded-2xl p-3">
+                    <div className="grid w-2/5 max-w-[22rem] place-items-center">
+                      <ChannelAvatar name={channel.name} src={channel.avatar} className="size-24" textClassName="text-2xl" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 text-lg font-semibold">
+                        {channel.name}
+                        {channel.verified && <Check className="bg-muted-foreground text-background size-4 rounded-full p-0.5" />}
+                      </p>
+                      <p className="text-muted-foreground text-xs">
+                        {[channel.handle, channel.subscribers ? `${formatCount(channel.subscribers)} subscribers` : null].filter(Boolean).join(" · ")}
+                      </p>
+                      <p className="text-muted-foreground mt-2 line-clamp-2 text-sm">{channel.description}</p>
+                    </div>
+                  </Link>
+                ))}
+                {section.videos.map((video) => (
+                  <VideoRow key={video.id} video={video} />
+                ))}
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-1.5 text-lg font-semibold">
-                  {channel.name}
-                  {channel.verified && <Check className="bg-muted-foreground text-background size-4 rounded-full p-0.5" />}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  {[channel.handle, channel.subscribers ? `${formatCount(channel.subscribers)} subscribers` : null].filter(Boolean).join(" · ")}
-                </p>
-                <p className="text-muted-foreground mt-2 line-clamp-2 text-sm">{channel.description}</p>
-              </div>
-            </Link>
-          ))}
-          {state.data.videos.map((video) => (
-            <VideoRow key={video.id} video={video} />
-          ))}
-          {!state.data.channels.length && !state.data.videos.length && (
-            <Empty className="mt-10">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <SearchX />
-                </EmptyMedia>
-                <EmptyTitle>No results</EmptyTitle>
-                <EmptyDescription>Try fewer words or loosen the filters.</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </div>
+            </section>
+          );
+        })}
+      {state.status === "ready" && !link && !sections.length && (
+        <Empty className="mt-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX />
+            </EmptyMedia>
+            <EmptyTitle>No results</EmptyTitle>
+            <EmptyDescription>Try fewer words or loosen the filters.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
       </div>
     </div>

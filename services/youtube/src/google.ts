@@ -63,14 +63,14 @@ export class RelinkRequired extends Error {}
 
 /** A valid access token for a linked account, refreshing (and persisting) it if needed. */
 export async function accessToken(accountId: string): Promise<string> {
-  const row = db.prepare("SELECT refresh_token, access_token, access_expires FROM accounts WHERE id = ?").get(accountId) as
+  const row = db.prepare("SELECT refresh_token, access_token, access_expires FROM accounts WHERE ref = ?").get(accountId) as
     | { refresh_token: string | null; access_token: string | null; access_expires: number }
     | undefined;
   if (!row?.refresh_token) throw new RelinkRequired();
   if (row.access_token && row.access_expires > Date.now() + 60_000) return decrypt(row.access_token);
   try {
     const t = await tokenRequest({ grant_type: "refresh_token", refresh_token: decrypt(row.refresh_token) });
-    db.prepare("UPDATE accounts SET access_token = ?, access_expires = ?, needs_relink = 0 WHERE id = ?").run(
+    db.prepare("UPDATE accounts SET access_token = ?, access_expires = ?, needs_relink = 0 WHERE ref = ?").run(
       encrypt(t.access_token),
       Date.now() + t.expires_in * 1000,
       accountId,
@@ -78,7 +78,7 @@ export async function accessToken(accountId: string): Promise<string> {
     return t.access_token;
   } catch (error) {
     if ((error as { code?: string }).code === "invalid_grant") {
-      db.prepare("UPDATE accounts SET needs_relink = 1 WHERE id = ?").run(accountId);
+      db.prepare("UPDATE accounts SET needs_relink = 1 WHERE ref = ?").run(accountId);
       throw new RelinkRequired();
     }
     throw error;
@@ -106,7 +106,7 @@ async function dataApi<T>(
     signal: AbortSignal.timeout(15_000),
   });
   if (res.status === 401) {
-    db.prepare("UPDATE accounts SET access_expires = 0 WHERE id = ?").run(accountId);
+    db.prepare("UPDATE accounts SET access_expires = 0 WHERE ref = ?").run(accountId);
     throw new RelinkRequired();
   }
   if (res.status === 204) return undefined as T;

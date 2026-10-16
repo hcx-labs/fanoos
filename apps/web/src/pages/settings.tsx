@@ -45,22 +45,24 @@ export function SettingsPage() {
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: "smooth" });
   }, [hash]);
-  // Report the result of a Google link round trip, then clean the URL.
+  // Report the result of a sign-in round trip (redirect flows), then clean the URL.
   useEffect(() => {
     const params = new URLSearchParams(search);
     const error = params.get("link_error");
     if (params.has("linked"))
       toast.success(params.has("actions") ? "Account linked, with actions" : "Account linked", {
         description: params.has("actions")
-          ? "It can now subscribe, like and comment, and its subscriptions are in your feed."
-          : "Its subscriptions are now part of your feed.",
+          ? "It can now act as the account, and what it follows is in your feed."
+          : "What it follows is now part of your feed.",
       });
     if (error)
       toast.error("Linking didn't finish", {
         description:
           {
-            not_configured: "Google sign-in isn't set up on this server.",
-            access_denied: "Access wasn't granted on Google's page.",
+            not_configured: "Sign-in for that service isn't set up on this server.",
+            access_denied: "Access wasn't granted on the sign-in page.",
+            denied: "Sign-in was cancelled.",
+            backend_down: "That service's backend isn't running.",
             expired: "The sign-in took too long or was opened in another session. Try again.",
             scope: "YouTube access wasn't granted. Tick the YouTube permission when Google asks.",
             write_denied: "The account was linked read-only: the “manage your YouTube account” box wasn't ticked on Google's page. Use Allow actions to try again.",
@@ -73,7 +75,7 @@ export function SettingsPage() {
   return (
     <div className="page grid gap-10 lg:grid-cols-[200px_minmax(0,1fr)]">
       <aside className="lg:sticky lg:top-24 lg:self-start">
-        <h1 className="font-display text-3xl font-semibold">Settings</h1>
+        <h1 className="font-display text-3xl font-semibold sm:text-4xl">Settings</h1>
         <nav aria-label="Settings sections" className="no-scrollbar mt-6 flex gap-1 overflow-x-auto lg:flex-col">
           {sections.filter((s) => !("ownerOnly" in s) || profile?.owner).map((s) => (
             <a key={s.id} href={`#${s.id}`} className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg px-3 py-1.5 text-sm whitespace-nowrap">
@@ -128,7 +130,7 @@ export function SettingsPage() {
         <Group
           id="accounts"
           title="Linked accounts"
-          description="YouTube accounts linked to your profile, grouped by the backend each one signs in through. All of them merge into one feed; the default account is used for likes, comments and subscribing unless you pick another."
+          description="Accounts on every service, grouped by service. What they follow merges into one feed; the default account acts for you (likes, comments, following) on its service unless you pick another."
           bare
         >
           <AccountsManager />

@@ -19,7 +19,7 @@ export function AgeRestrictedSetup() {
   // Poll while something is in progress.
   useEffect(() => {
     let live = true;
-    const load = () => api<State>("/admin/age-restricted").then((s) => live && setState(s), () => {});
+    const load = () => api<State>("/admin/b/youtube/age-restricted").then((s) => live && setState(s), () => {});
     void load();
     const timer = window.setInterval(() => {
       if (state?.status === "starting" || state?.status === "waiting") void load();
@@ -56,7 +56,7 @@ export function AgeRestrictedSetup() {
             <ShieldAlert className="text-brand-strong mt-0.5 size-3.5 shrink-0" />
             Use a secondary account. Google sees that account play age-restricted videos, and unofficial clients carry some risk of restrictions.
           </p>
-          <Button onClick={() => void run("/admin/age-restricted/start")} disabled={busy}>
+          <Button onClick={() => void run("/admin/b/youtube/age-restricted/start")} disabled={busy}>
             {busy && <Spinner />} Sign in with Google
           </Button>
         </>
@@ -101,7 +101,7 @@ export function AgeRestrictedSetup() {
           <p className="text-muted-foreground flex items-center gap-2 text-xs">
             <Spinner className="size-3" /> Waiting for you to approve… this page updates by itself.
           </p>
-          <Button variant="ghost" size="sm" onClick={() => void run("/admin/age-restricted/sign-out", "Sign-in cancelled")} disabled={busy}>
+          <Button variant="ghost" size="sm" onClick={() => void run("/admin/b/youtube/age-restricted/sign-out", "Sign-in cancelled")} disabled={busy}>
             Cancel
           </Button>
         </div>
@@ -112,7 +112,7 @@ export function AgeRestrictedSetup() {
           <p className="flex flex-1 items-center gap-2 text-sm">
             <Check className="text-like size-4" /> Signed in. Age-restricted videos now play through this account.
           </p>
-          <Button variant="outline" onClick={() => void run("/admin/age-restricted/sign-out", "Signed out of age-restricted playback")} disabled={busy}>
+          <Button variant="outline" onClick={() => void run("/admin/b/youtube/age-restricted/sign-out", "Signed out of age-restricted playback")} disabled={busy}>
             <LogOut /> Sign out
           </Button>
         </div>
@@ -121,7 +121,7 @@ export function AgeRestrictedSetup() {
       {state.status === "error" && (
         <div className="space-y-3">
           <p className="text-destructive text-sm">{state.error}</p>
-          <Button onClick={() => void run("/admin/age-restricted/start")} disabled={busy}>
+          <Button onClick={() => void run("/admin/b/youtube/age-restricted/start")} disabled={busy}>
             {busy && <Spinner />} Try again
           </Button>
         </div>

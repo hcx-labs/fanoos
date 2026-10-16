@@ -15,7 +15,7 @@ import { authActions, getAuthConfig, useAccounts, useProfile, useSession, type A
 
 const features = [
   { icon: ListChecks, title: "Only your subscriptions", text: "A chronological feed of channels you chose. No recommendations, no Shorts wall." },
-  { icon: Layers, title: "Every account, one feed", text: `Link several YouTube accounts to your ${brand.name} account. Their subscriptions merge into one list.` },
+  { icon: Layers, title: "Every service, one feed", text: `Link YouTube and Crunchyroll accounts to your ${brand.name} account. What they follow merges into one list.` },
   { icon: Ban, title: "No ads, no sponsors", text: "Ads are never requested. Sponsor reads are skipped using SponsorBlock." },
   { icon: ThumbsDown, title: "Dislikes are back", text: "Like ratios from Return YouTube Dislike, and honest titles from DeArrow." },
   { icon: ShieldCheck, title: "Nothing to track", text: "Video is proxied through your server. History stays on your device." },
@@ -26,7 +26,7 @@ export function WelcomePage() {
   const session = useSession();
   const profile = useProfile();
   const { accounts } = useAccounts();
-  useTitle(profile ? "Link a YouTube account" : "Sign in");
+  useTitle(profile ? "Link an account" : "Sign in");
   const [auth, setAuth] = useState<AuthConfig | null>(null);
   useEffect(() => {
     void getAuthConfig().then(setAuth);
@@ -82,7 +82,7 @@ export function WelcomePage() {
             <>
               <CardHeader>
                 <p className="text-brand-strong text-xs font-semibold">Step 2 of 2</p>
-                <CardTitle className="font-display text-2xl">Link a YouTube account</CardTitle>
+                <CardTitle className="font-display text-2xl">Link an account</CardTitle>
                 <CardDescription>
                   Welcome, {profile.name.split(" ")[0]}. Link one or more accounts to your {brand.name} account. You can add more any time.
                 </CardDescription>
@@ -189,7 +189,7 @@ function SignIn() {
       <CardHeader>
         <p className="text-brand-strong text-xs font-semibold">Step 1 of 2</p>
         <CardTitle className="font-display text-2xl">{creating ? `Create your ${brand.name} account` : `Sign in to ${brand.name}`}</CardTitle>
-        <CardDescription>One {brand.name} account holds all your linked YouTube accounts and settings.</CardDescription>
+        <CardDescription>One {brand.name} account holds every account you link, on every service, and your settings.</CardDescription>
       </CardHeader>
       <CardContent>
         <form

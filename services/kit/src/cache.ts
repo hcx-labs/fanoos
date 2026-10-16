@@ -1,5 +1,4 @@
 import { createClient } from "redis";
-import { config } from "./config.ts";
 
 /** Small in-memory TTL cache that also de-duplicates concurrent loads of the same key. */
 export class TtlCache<T> {
@@ -85,9 +84,19 @@ function memoryStore(max = 5000): Store {
 }
 
 let store: Store = memoryStore();
+let defaults = { ttlSeconds: 600, staleSeconds: 86_400, prefix: "fanoos" };
 
-if (config.redisUrl) {
-  const client = createClient({ url: config.redisUrl, socket: { reconnectStrategy: (n) => Math.min(n * 200, 5000) } });
+/**
+ * Configure the shared cache once at startup: Redis when a URL is given, else memory.
+ * `prefix` keeps each service's keys apart in a shared Redis.
+ */
+export function initCache(opts: { redisUrl?: string; ttlSeconds: number; staleSeconds: number; prefix: string }) {
+  defaults = { ttlSeconds: opts.ttlSeconds, staleSeconds: opts.staleSeconds, prefix: opts.prefix };
+  if (opts.redisUrl) connectRedis(opts.redisUrl);
+}
+
+function connectRedis(url: string) {
+  const client = createClient({ url, socket: { reconnectStrategy: (n) => Math.min(n * 200, 5000) } });
   let warned = false;
   client.on("error", (error: Error) => {
     if (!warned) console.warn(`Redis unavailable (${error.message}); using the in-memory cache until it's back.`);
@@ -143,13 +152,12 @@ export class SharedCache<T> {
 
   constructor(namespace: string, opts: { ttlSeconds?: number; staleSeconds?: number } = {}) {
     this.namespace = namespace;
-    this.ttl = opts.ttlSeconds ?? config.cacheTtlSeconds;
-    this.stale = opts.staleSeconds ?? config.cacheStaleSeconds;
+    this.ttl = opts.ttlSeconds ?? defaults.ttlSeconds;
+    this.stale = opts.staleSeconds ?? defaults.staleSeconds;
   }
 
   private key(key: string) {
-    // "v2": entries carry their storage time (older entries were bare values).
-    return `tube:v2:${this.namespace}:${key}`;
+    return `${defaults.prefix}:${this.namespace}:${key}`;
   }
 
   private isFresh(entry: Entry<T>) {

@@ -6,13 +6,13 @@
  * (`npm run companion:signed-in`) is asked only when YouTube age-restricts a video,
  * so ordinary viewing is never tied to a Google account.
  *
- * Both listen on 127.0.0.1. This server asks them for playability and DASH
- * manifests and rewrites every segment URL to the signed /api/media proxy, so
- * browsers only ever talk to this server.
+ * Both listen on 127.0.0.1. This backend asks them for playability and DASH
+ * manifests and rewrites every segment URL to its signed /public/media proxy, so
+ * browsers only ever talk to Fanoos.
  */
-import { SharedCache } from "../cache.ts";
-import { config } from "../config.ts";
-import { type CompanionInstance, proxyCompanion } from "../media.ts";
+import { SharedCache } from "./cache.ts";
+import { config } from "./config.ts";
+import { type CompanionInstance, proxyCompanion } from "./media.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
 
 export type Playability =
@@ -114,8 +114,8 @@ const codecFamily = (codecs: string) => (/^av01/.test(codecs) ? "av1" : /^vp0?9/
  * per container and codec (H.264, VP9, AV1; AAC, Opus), so the player can pick the
  * codec the device decodes best. YouTube's 1440p and 4K are VP9/AV1 only.
  */
-export function dashManifest(id: string, origin: string): Promise<string> {
-  return manifests.get(id, async () => {
+export function dashManifest(id: string, base: string): Promise<string> {
+  return manifests.get(`${base}|${id}`, async () => {
     const play = await playability(id);
     if (!play.ok) throw new Error(play.reason);
     const formats = ((await playerResponse(play.instance, id)).streamingData?.adaptiveFormats ?? []).filter(
@@ -134,7 +134,7 @@ export function dashManifest(id: string, origin: string): Promise<string> {
 
     const url = (f: Format) => {
       const u = new URL(f.url!);
-      return proxyCompanion(`/companion/videoplayback?${u.searchParams}&host=${u.host}`, origin, play.instance);
+      return proxyCompanion(`/companion/videoplayback?${u.searchParams}&host=${u.host}`, base, play.instance);
     };
     let setId = 0;
     const adaptationSets = [...sets.entries()].map(([key, list]) => {

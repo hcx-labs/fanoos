@@ -7,7 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { config } from "../config.ts";
+import { config } from "./config.ts";
 
 export type SignedInState =
   | { status: "off" }
@@ -16,7 +16,7 @@ export type SignedInState =
   | { status: "ready" }
   | { status: "error"; error: string };
 
-const repoRoot = resolve(import.meta.dirname, "../../../..");
+const repoRoot = resolve(import.meta.dirname, "../../..");
 const script = join(repoRoot, "scripts/companion.sh");
 const cacheDir = join(config.dataDir, "companion-signed-in");
 const port = Number(new URL(config.companion.signedInUrl || "http://127.0.0.1:8283").port || 8283);

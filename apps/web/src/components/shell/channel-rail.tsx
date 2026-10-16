@@ -7,19 +7,20 @@ import { nav } from "@/components/shell/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useData } from "@/hooks/use-data";
 import { brand } from "@/lib/brand";
-import { paths } from "@/lib/paths";
+import { itemKey, paths } from "@/lib/paths";
+import { ServiceMark } from "@/components/service-mark";
 import { useSource } from "@/lib/source";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-/** Persistent left rail on wide screens: navigation and the viewer's own channels. */
+/** Persistent left rail on wide screens: navigation and what the viewer follows (channels and shows). */
 export function ChannelRail() {
   const muted = useStore((s) => s.muted);
   const source = useSource();
-  const state = useData(() => source.subscriptions(), [source.key]);
+  const state = useData(() => source.following(), [source.key]);
   const [more, setMore] = useState(false);
   const sorted = (state.data ?? [])
-    .filter((c) => !muted.includes(c.id))
+    .filter((c) => !muted.includes(itemKey({ backend: c.backend, id: c.id })))
     .sort((a, b) => Number(!!b.live) - Number(!!a.live) || b.unseen - a.unseen);
   const shown = more ? sorted : sorted.slice(0, 8);
 
@@ -47,8 +48,8 @@ export function ChannelRail() {
       </nav>
 
       <div className="mt-8 mb-2 flex items-center justify-between px-3">
-        <h2 className="text-sm font-semibold">Your channels</h2>
-        <Link to="/subscriptions" className="text-muted-foreground hover:text-foreground text-xs">
+        <h2 className="text-sm font-semibold">Following</h2>
+        <Link to="/following" className="text-muted-foreground hover:text-foreground text-xs">
           Manage
         </Link>
       </div>
@@ -69,17 +70,24 @@ export function ChannelRail() {
         )}
       >
         {shown.map((channel) => (
-          <li key={channel.id}>
+          <li key={`${channel.backend}:${channel.id}`}>
             <NavLink
               to={paths.channel(channel)}
               className={({ isActive }) =>
                 cn("hover:bg-muted flex items-center gap-3 rounded-xl px-3 py-2", isActive && "bg-secondary")
               }
             >
-              <ChannelAvatar name={channel.name} src={channel.avatar} className="size-8" textClassName="text-[11px]" />
+              {channel.kind === "series" ? (
+                <span className="bg-muted grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md">
+                  {channel.avatar && <img src={channel.avatar} alt="" loading="lazy" className="size-full object-cover" />}
+                </span>
+              ) : (
+                <ChannelAvatar name={channel.name} src={channel.avatar} className="size-8" textClassName="text-[11px]" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{channel.name}</span>
                 <span className="text-muted-foreground flex items-center gap-1.5 truncate text-xs">
+                  <ServiceMark backend={channel.backend} />
                   {channel.group}
                   <ViaDots via={channel.via} />
                 </span>

@@ -4,6 +4,13 @@
   "type": "module",
   "version": "0.0.0",
   "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts" } },
-  "scripts": { "typecheck": "tsc --noEmit -p ." }
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "license": "AGPL-3.0-or-later"
 }

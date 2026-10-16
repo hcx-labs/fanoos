@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
 import { Search } from "lucide-react";
 import { ChannelRail } from "@/components/shell/channel-rail";
@@ -8,12 +8,17 @@ import { cn } from "@/lib/utils";
 
 export function Layout() {
   const [searchOpen, setSearchOpen] = useSearchShortcut();
-  const { pathname } = useLocation();
+  const { pathname, state } = useLocation();
   const glow = !pathname.startsWith("/watch");
+  // Each page mounts fresh (and animates in), except navigations marked as the same page,
+  // e.g. switching an episode's audio language, which only swaps the stream.
+  const page = useRef(pathname);
+  const samePage = (state as { samePage?: boolean } | null)?.samePage === true;
+  if (!samePage) page.current = pathname;
 
   useEffect(() => {
-    window.scrollTo({ top: 0 });
-  }, [pathname]);
+    if (!samePage) window.scrollTo({ top: 0 });
+  }, [pathname, samePage]);
 
   return (
     <div className="relative isolate min-h-dvh pb-20 md:pb-0">
@@ -22,7 +27,7 @@ export function Layout() {
       <TopBar onSearch={() => setSearchOpen(true)} />
       <div className="flex">
         <ChannelRail />
-        <main key={pathname} className="rise min-w-0 flex-1">
+        <main key={page.current} className="rise min-w-0 flex-1">
           <Outlet />
         </main>
       </div>

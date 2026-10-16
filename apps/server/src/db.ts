@@ -90,6 +90,12 @@ for (const statement of [
   "ALTER TABLE accounts ADD COLUMN scopes TEXT NOT NULL DEFAULT ''",
   // How the session was created: "local" (password/passkey) or "oidc".
   "ALTER TABLE sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'local'",
+  // Backends as separate services: core keeps the backend's opaque account ref, never credentials.
+  "ALTER TABLE accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'youtube'",
+  "ALTER TABLE accounts ADD COLUMN ref TEXT",
+  "ALTER TABLE accounts ADD COLUMN can_write INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE accounts ADD COLUMN plan TEXT",
+  "ALTER TABLE backends ADD COLUMN slug TEXT",
 ]) {
   try {
     db.exec(statement);
@@ -97,6 +103,10 @@ for (const statement of [
     // Column already exists.
   }
 }
+
+// Channel groups are keyed "<backend slug>:<channel id>"; older rows were YouTube channel ids.
+db.exec("UPDATE channel_groups SET channel_id = 'youtube:' || channel_id WHERE channel_id NOT LIKE '%:%'");
+db.exec("UPDATE backends SET slug = kind WHERE slug IS NULL");
 
 // Housekeeping: drop expired sessions and pending challenges.
 export function sweep() {
@@ -109,6 +119,14 @@ export function sweep() {
 export const pending = {
   put(kind: string, id: string, data: unknown, ttlMs = 10 * 60_000) {
     db.prepare("INSERT OR REPLACE INTO pending (id, kind, data, expires_at) VALUES (?, ?, ?, ?)").run(id, kind, JSON.stringify(data), Date.now() + ttlMs);
+  },
+  /** Read without consuming (polled flows). */
+  get<T>(kind: string, id: string): T | null {
+    const row = db.prepare("SELECT data, expires_at FROM pending WHERE id = ? AND kind = ?").get(id, kind) as { data: string; expires_at: number } | undefined;
+    return row && row.expires_at > Date.now() ? (JSON.parse(row.data) as T) : null;
+  },
+  delete(id: string) {
+    db.prepare("DELETE FROM pending WHERE id = ?").run(id);
   },
   /** Read and delete (single use). */
   take<T>(kind: string, id: string): T | null {

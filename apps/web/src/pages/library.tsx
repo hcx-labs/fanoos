@@ -1,4 +1,5 @@
 import { Clock3, History, ListVideo, Lock, Trash2 } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
 import { VideoCard, VideoRow } from "@/components/video-card";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -11,15 +12,16 @@ import { formatAgo } from "@/lib/format";
 import { useSource } from "@/lib/source";
 import { useAccounts } from "@/lib/session";
 import { actions, useSettings, useStore } from "@/lib/store";
+import { itemKey, parseKey } from "@/lib/paths";
 import type { Video } from "@/lib/types";
 import { useTitle } from "@/hooks/use-title";
 
-/** Resolve stored video ids through the current backend; returns a lookup. */
-function useVideoLookup(ids: string[]) {
+/** Resolve stored item keys ("<backend>/<id>") through their backends; returns a lookup by key. */
+function useVideoLookup(keys: string[]) {
   const source = useSource();
-  const state = useData(() => source.videos(ids), [source.key, ids.join(",")]);
-  const map = new Map((state.data ?? []).map((v) => [v.id, v]));
-  return { loading: state.status === "loading", get: (id: string): Video | undefined => map.get(id) };
+  const state = useData(() => source.videos(keys.map(parseKey)), [source.key, keys.join(",")]);
+  const map = new Map((state.data ?? []).map((v) => [itemKey(v), v]));
+  return { loading: state.status === "loading", get: (key: string): Video | undefined => map.get(key) };
 }
 
 export function LibraryPage() {
@@ -27,10 +29,11 @@ export function LibraryPage() {
   return (
     <div className="relative">
       <div className="page relative">
-        <h1 className="font-display text-3xl font-semibold sm:text-4xl">Library</h1>
-        <p className="text-muted-foreground mt-2 flex items-center gap-1.5">
-          <Lock className="size-3.5" /> History and Watch later are saved to your Fanoos account and shared across your devices. Google never sees them.
-        </p>
+        <PageHeader
+          title="Library"
+          icon={Lock}
+          description="History and Watch later are saved to your Fanoos account and shared across your devices. The services never see them."
+        />
         <Tabs defaultValue="later" className="mt-8">
           <TabsList variant="line" className="h-11 border-b">
             <TabsTrigger value="later">
@@ -78,7 +81,7 @@ function WatchLater() {
   return (
     <div className="grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {list.map((video) => (
-        <VideoCard key={video.id} video={video} />
+        <VideoCard key={itemKey(video)} video={video} />
       ))}
     </div>
   );

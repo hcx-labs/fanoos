@@ -28,14 +28,21 @@ export type Settings = {
   feedLayout: "grid" | "list";
 };
 
+/**
+ * Items and channels are stored by key, "<backend>/<id>" (see itemKey in paths.ts), so lists can
+ * hold YouTube videos and Crunchyroll episodes side by side.
+ */
 type State = {
   settings: Settings;
   watchLater: string[];
-  /** Seconds watched per video, for resuming and "Continue watching". */
+  /** Seconds watched per item, for resuming and "Continue watching". */
   progress: Record<string, number>;
   history: { id: string; at: string }[];
   searches: string[];
+  /** Hidden channels and shows. */
   muted: string[];
+  /** Preferred audio and subtitle languages for episodes ("ja-JP", "en-US"; "" = off). */
+  languages?: { audio?: string; subtitles?: string };
 };
 
 const defaults: State = {
@@ -73,11 +80,18 @@ const defaults: State = {
 /** Where this browser kept the data before it moved to the account; uploaded once, then removed. */
 const LEGACY_KEY = storageKey("local.v1");
 
+/** Keys saved before backends had names are YouTube ones. */
+const keyed = (key: string) => (key.includes("/") ? key : `youtube/${key}`);
+
 function normalize(saved: Partial<State> | null | undefined): State {
   if (!saved) return defaults;
   return {
     ...defaults,
     ...saved,
+    progress: Object.fromEntries(Object.entries(saved.progress ?? {}).map(([k, v]) => [keyed(k), v])),
+    history: (saved.history ?? []).map((h) => ({ ...h, id: keyed(h.id) })),
+    watchLater: (saved.watchLater ?? []).map(keyed),
+    muted: (saved.muted ?? []).map(keyed),
     settings: { ...defaults.settings, ...saved.settings, segments: { ...defaults.settings.segments, ...saved.settings?.segments } },
   };
 }
@@ -226,10 +240,14 @@ export const actions = {
       return { ...s, progress };
     });
   },
+  languages(update: { audio?: string; subtitles?: string }) {
+    set((s) => ({ ...s, languages: { ...s.languages, ...update } }));
+  },
   /** Reset history, positions, searches, Watch later and preferences for the account. */
   reset() {
     set(() => defaults);
   },
 };
 
-export const useProgress = (id: string) => useStore((s) => s.progress[id]);
+/** Saved position for an item key. */
+export const useProgress = (key: string) => useStore((s) => s.progress[key]);

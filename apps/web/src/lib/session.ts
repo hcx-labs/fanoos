@@ -6,7 +6,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { api, RequestError } from "./api";
 import { clearAppData, loadAppData } from "./store";
-import type { LinkedAccount, Me } from "./types";
+import type { Backend, BackendFeature, LinkedAccount, Me } from "./types";
 
 type Session = { status: "loading" } | { status: "signed-out" } | { status: "error"; error: string } | { status: "ready"; me: Me };
 
@@ -58,13 +58,26 @@ export function useAccounts() {
     const accounts = me?.accounts ?? [];
     const active = accounts.find((a) => a.id === me?.defaultAccountId) ?? accounts[0] ?? null;
     const inFeed = accounts.filter((a) => a.inFeed && !a.needsRelink);
+    const backendOf = (account: LinkedAccount) => backends.find((b) => b.id === account.backendId);
+    const bySlug = (slug: string | undefined) => backends.find((b) => b.slug === (slug ?? "youtube"));
+    /** Usable accounts on one backend; the default account first when it's one of them. */
+    const accountsOn = (slug: string | undefined) => {
+      const backend = bySlug(slug);
+      const list = accounts.filter((a) => a.backendId === backend?.id && !a.needsRelink);
+      return active && list.includes(active) ? [active, ...list.filter((a) => a !== active)] : list;
+    };
     return {
       backends,
       accounts,
       active,
       inFeed,
-      googleConfigured: me?.googleConfigured ?? false,
-      backendOf: (account: LinkedAccount) => backends.find((b) => b.id === account.backendId),
+      backendOf,
+      bySlug,
+      accountsOn,
+      /** Whether a backend offers a feature (comments, ratings…). */
+      can: (slug: string | undefined, feature: BackendFeature) => bySlug(slug)?.info?.features.includes(feature) ?? false,
+      /** Backends with at least one linked account in the feed, in display order. */
+      feedBackends: backends.filter((b) => inFeed.some((a) => a.backendId === b.id)),
       byId: (id: string) => accounts.find((a) => a.id === id),
     };
   }, [s]);
@@ -106,17 +119,41 @@ export const accountActions = {
     );
   },
   /**
-   * Start Google sign-in for a new or re-linked account. Leaves the page.
-   * `write` also asks for permission to subscribe, rate and comment; `accountId`
-   * upgrades that existing account (Google pre-selects it).
+   * Start linking an account on a backend. Redirect flows leave the page for the service's
+   * sign-in; device flows return a code to show while `waitForLink` polls. `write` also asks
+   * for permission to act as the account; `accountId` re-links or upgrades that account.
    */
-  link(backendId: string, returnTo: "home" | "settings" = "settings", opts: { write?: boolean; accountId?: string } = {}) {
-    const params = new URLSearchParams({ backend: backendId, return: returnTo });
-    if (opts.write) params.set("write", "1");
-    if (opts.accountId) params.set("account", opts.accountId);
-    window.location.assign(`/api/links/google/start?${params}`);
+  async link(backendId: string, returnTo: "home" | "settings" = "settings", opts: { write?: boolean; accountId?: string } = {}): Promise<DeviceLink | null> {
+    const res = await api<LinkResponse>("/links", { body: { backendId, returnTo, write: opts.write, accountId: opts.accountId } });
+    if (res.kind === "redirect") {
+      window.location.assign(res.url);
+      return null;
+    }
+    return res;
+  },
+  /** Poll a device flow until it's linked, failed, or `signal` aborts. */
+  async waitForLink(link: DeviceLink, signal: AbortSignal): Promise<{ accountId: string }> {
+    const deadline = Date.now() + link.expiresIn * 1000;
+    while (!signal.aborted && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, link.interval * 1000));
+      if (signal.aborted) break;
+      const status = await api<LinkPoll>(`/links/${link.flow}`).catch(() => ({ status: "pending" }) as LinkPoll);
+      if (status.status === "linked") {
+        await refreshSession();
+        return { accountId: status.accountId };
+      }
+      if (status.status === "failed") throw Object.assign(new Error(status.error), { code: status.code });
+    }
+    throw Object.assign(new Error(signal.aborted ? "Cancelled." : "The code expired. Start again for a new one."), { code: signal.aborted ? "cancelled" : "expired" });
   },
 };
+
+export type DeviceLink = { kind: "device"; flow: string; code: string; verifyUrl: string; expiresIn: number; interval: number };
+type LinkResponse = { kind: "redirect"; url: string } | DeviceLink;
+type LinkPoll = { status: "pending" } | { status: "linked"; accountId: string } | { status: "failed"; error: string; code?: string };
+
+/** A backend's display name, falling back to its slug while it's unreachable. */
+export const backendName = (backend: Backend | undefined) => backend?.info?.name ?? backend?.slug ?? "Unknown";
 
 export const authActions = {
   async register(name: string, email: string, password: string) {

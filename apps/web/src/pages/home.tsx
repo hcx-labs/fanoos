@@ -4,9 +4,10 @@ import { LayoutGrid, Link2, List, Settings2, Sparkles, X } from "lucide-react";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { Hero, pickHeroVideos } from "@/components/hero";
+import { PageHeader, ServicePills } from "@/components/page-header";
 import { Thumbnail, VideoCard, VideoRow, useVideoTitle } from "@/components/video-card";
 import { Button } from "@/components/ui/button";
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Shelf } from "@/components/shelf";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,9 +16,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useData, type DataState } from "@/hooks/use-data";
 import { formatDuration } from "@/lib/format";
-import { paths } from "@/lib/paths";
+import { channelRef, itemKey, parseKey, paths } from "@/lib/paths";
+import { episodeLabel, ServiceMark } from "@/components/service-mark";
 import { useSource } from "@/lib/source";
-import { useAccounts, useProfile } from "@/lib/session";
+import { backendName, useAccounts, useProfile } from "@/lib/session";
 import { actions, useProgress, useSettings, useStore } from "@/lib/store";
 import type { Channel, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -44,28 +46,42 @@ export function HomePage() {
   const [focus, setFocus] = useState<string | null>(null);
   const settings = useSettings();
   const muted = useStore((s) => s.muted);
-  const { accounts, inFeed } = useAccounts();
+  const { accounts, inFeed, feedBackends, backendOf } = useAccounts();
   const profile = useProfile();
   const [accountId, setAccountId] = useState("all");
+  // Which service the home page shows: "all", or one backend's slug.
+  const [service, setService] = useState("all");
   const source = useSource();
-  const subs = useData(() => source.subscriptions(), [source.key]);
+  const subs = useData(() => source.following(), [source.key]);
   const feed = useData(
-    () => source.feed({ group: group === "all" ? undefined : group, accountId: accountId === "all" ? undefined : accountId }),
-    [source.key, group, accountId],
+    () =>
+      source.feed({
+        group: group === "all" ? undefined : group,
+        accountId: accountId === "all" ? undefined : accountId,
+        backend: service === "all" ? undefined : service,
+      }),
+    [source.key, group, accountId, service],
   );
   // Groups come from the channels themselves, across every account.
   const groups = useMemo(() => [...new Set((subs.data ?? []).map((c) => c.group).filter((g): g is string => Boolean(g)))].sort(), [subs.data]);
   const watchedIds = useStore((s) => s.history);
   const progress = useStore((s) => s.progress);
-  // Most recently saved positions first.
-  const resumeIds = useMemo(() => Object.keys(progress).reverse().slice(0, 12), [progress]);
-  const resume = useData(() => source.videos(resumeIds), [resumeIds.join(",")]);
+  // Most recently saved positions first (kept in the Fanoos account).
+  const resumeKeys = useMemo(() => Object.keys(progress).reverse().slice(0, 12), [progress]);
+  const resume = useData(() => source.videos(resumeKeys.map(parseKey)), [resumeKeys.join(",")]);
+  // Positions services keep themselves (Crunchyroll's history).
+  const remote = useData(() => source.continueWatching(), [source.key]);
+  const feedAccounts = service === "all" ? inFeed : inFeed.filter((a) => backendOf(a)?.slug === service);
+  // Account chips only help to pick between several accounts on the same service; with one
+  // account per service, the service pills already say it all.
+  const sameService = service !== "all" ? feedAccounts : feedBackends.length === 1 ? inFeed : [];
+  const accountChoices = sameService.length > 1 ? sameService : [];
 
   // Categories present in the feed, most common first (YouTube's own video categories).
   const [category, setCategory] = useState("all");
   const categoryCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const v of feed.data ?? []) if (v.category) counts.set(v.category, (counts.get(v.category) ?? 0) + 1);
+    for (const v of feed.data ?? []) if (v.category && !v.episode) counts.set(v.category, (counts.get(v.category) ?? 0) + 1);
     return [...counts].sort((a, b) => b[1] - a[1]);
   }, [feed.data]);
 
@@ -73,11 +89,11 @@ export function HomePage() {
     if (feed.status !== "ready") return [];
     return feed.data.filter(
       (v) =>
-        !muted.includes(v.channelId) &&
-        (!focus || v.channelId === focus) &&
+        !muted.includes(itemKey(channelRef(v))) &&
+        (!focus || `${v.backend}:${v.channelId}` === focus) &&
         // "Watched" = played before and not left part-way.
-        !(settings.hideWatched && watchedIds.some((h) => h.id === v.id) && !progress[v.id]) &&
-        (category === "all" || v.category === category),
+        !(settings.hideWatched && watchedIds.some((h) => h.id === itemKey(v)) && !progress[itemKey(v)]) &&
+        (category === "all" || v.category === category || (v.episode && category === "all")),
     );
   }, [feed, muted, focus, settings.hideWatched, watchedIds, progress, category]);
 
@@ -85,10 +101,21 @@ export function HomePage() {
   // so removing an item updates instantly instead of the row flickering away.
   const lastResume = useRef<Video[]>([]);
   if (resume.data) lastResume.current = resume.data;
-  const inProgress = lastResume.current.filter((v) => progress[v.id]);
-  // The hero spotlights the newest upload from up to five channels; the grid shows the rest.
-  const heroVideos = useMemo(() => pickHeroVideos(videos), [videos]);
-  const rest = useMemo(() => videos.filter((v) => !heroVideos.includes(v)), [videos, heroVideos]);
+  const inProgress = useMemo(() => {
+    const local = lastResume.current.filter((v) => progress[itemKey(v)]);
+    const seen = new Set(local.map(itemKey));
+    const fromServices = (remote.data ?? []).filter((v) => !seen.has(itemKey(v)));
+    return [...local, ...fromServices].filter((v) => service === "all" || v.backend === service);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resume.data, remote.data, progress, service]);
+  // Episodes ("up next" from followed shows) get their own row; uploads fill the day sections.
+  const episodes = useMemo(() => videos.filter((v) => v.episode), [videos]);
+  const uploads = useMemo(() => videos.filter((v) => !v.episode), [videos]);
+  const onlyShows = uploads.length === 0 && episodes.length > 0;
+  // The hero spotlights the newest item from up to five channels or shows; the grid shows the rest.
+  const heroVideos = useMemo(() => pickHeroVideos(onlyShows ? episodes : [...uploads.slice(0, 40), ...episodes.filter(isRecent)].sort(byNewest)), [uploads, episodes, onlyShows]);
+  const rest = useMemo(() => (onlyShows ? episodes : uploads).filter((v) => !heroVideos.includes(v)), [uploads, episodes, onlyShows, heroVideos]);
+  const showRow = !onlyShows ? episodes.filter((v) => !heroVideos.includes(v)) : [];
   const featured = heroVideos[0];
   const sections = useMemo(() => {
     const map = new Map<string, Video[]>();
@@ -96,30 +123,43 @@ export function HomePage() {
     return [...map];
   }, [rest]);
 
-  const unseen = subs.status === "ready" ? subs.data.reduce((total, c) => total + c.unseen, 0) : 0;
-  const unseenChannels = subs.status === "ready" ? subs.data.filter((c) => c.unseen).length : 0;
+  const followed = (subs.data ?? []).filter((c) => service === "all" || c.backend === service);
+  const unseen = followed.filter((c) => c.kind !== "series").reduce((total, c) => total + c.unseen, 0);
+  const unseenChannels = followed.filter((c) => c.kind !== "series" && c.unseen).length;
+  const newShows = followed.filter((c) => c.kind === "series" && c.unseen).length;
 
   return (
     <div className="relative">
       <div className="page relative">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="font-display text-3xl font-semibold sm:text-4xl">
-              {greeting()}{profile ? `, ${profile.name.split(" ")[0]}` : ""}.
-            </h1>
-            <div className="text-muted-foreground mt-2 text-sm sm:text-base">
+        <PageHeader
+          title={`${greeting()}${profile ? `, ${profile.name.split(" ")[0]}` : ""}.`}
+          description={
+            <>
               {inFeed.length === 0 ? (
                 "Nothing linked yet."
               ) : subs.status === "ready" ? (
                 <>
-                  <span className="text-foreground font-medium">{unseen} new videos</span> from {unseenChannels} channels across {inFeed.length} {inFeed.length === 1 ? "account" : "accounts"}.
+                  {unseenChannels > 0 || !newShows ? (
+                    <>
+                      <span className="text-foreground font-medium">{unseen} new videos</span> from {unseenChannels} channels
+                    </>
+                  ) : null}
+                  {unseenChannels > 0 && newShows > 0 ? " and " : null}
+                  {newShows > 0 && (
+                    <>
+                      <span className="text-foreground font-medium">
+                        new episodes of {newShows} {newShows === 1 ? "show" : "shows"}
+                      </span>
+                    </>
+                  )}{" "}
+                  across {feedAccounts.length} {feedAccounts.length === 1 ? "account" : "accounts"}.
                 </>
               ) : (
                 <Skeleton className="inline-block h-4 w-72 align-middle" />
               )}
-            </div>
-          </div>
-        </header>
+            </>
+          }
+        />
 
         {inFeed.length === 0 ? (
           <Empty className="bg-card/50 mt-10 rounded-3xl border py-16">
@@ -127,11 +167,11 @@ export function HomePage() {
               <EmptyMedia variant="icon">
                 <Link2 />
               </EmptyMedia>
-              <EmptyTitle>{accounts.length ? "No accounts in your feed" : "Link a YouTube account"}</EmptyTitle>
+              <EmptyTitle>{accounts.length ? "No accounts in your feed" : "Link an account"}</EmptyTitle>
               <EmptyDescription>
                 {accounts.length
-                  ? "Every linked account is switched off for the feed. Turn one back on to see its subscriptions."
-                  : "Your feed is built from the subscriptions of the accounts you link. Link as many as you like."}
+                  ? "Every linked account is switched off for the feed. Turn one back on to see what it follows."
+                  : "Your feed is built from what your linked accounts follow: YouTube subscriptions, Crunchyroll watchlists. Link as many as you like."}
               </EmptyDescription>
             </EmptyHeader>
             <Button asChild className="rounded-full px-5">
@@ -142,9 +182,23 @@ export function HomePage() {
           <>
         <ChannelRail state={subs} focus={focus} onFocus={setFocus} />
 
-        {inFeed.length > 1 && (
-          <div className="mt-6 flex flex-wrap items-center gap-2" role="group" aria-label="Show subscriptions from">
-            {[{ id: "all", label: "Everything" }, ...inFeed].map((a) => {
+        {(feedBackends.length > 1 || accountChoices.length > 1) && (
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            {feedBackends.length > 1 && (
+              <ServicePills
+                label="Service"
+                value={service}
+                onChange={(slug) => {
+                  setService(slug);
+                  setAccountId("all");
+                  setCategory("all");
+                }}
+                options={[{ value: "all", label: "Everything" }, ...feedBackends.map((b) => ({ value: b.slug, label: backendName(b), color: b.info?.color }))]}
+              />
+            )}
+            {accountChoices.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Show what's followed by">
+            {[{ id: "all", label: "All accounts" }, ...accountChoices].map((a) => {
               const selected = accountId === a.id;
               return (
                 <button
@@ -163,6 +217,8 @@ export function HomePage() {
                 </button>
               );
             })}
+          </div>
+            )}
           </div>
         )}
 
@@ -273,27 +329,30 @@ export function HomePage() {
             <Hero videos={heroVideos} />
 
             {inProgress.length > 0 && !focus && (
-              <section className="mt-12" aria-labelledby="continue">
-                <div className="mb-4 flex items-baseline justify-between gap-4">
-                  <h2 id="continue" className="font-display text-xl font-semibold">
-                    Continue watching
-                  </h2>
+              <Shelf
+                id="continue"
+                title="Continue watching"
+                actions={
                   <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => actions.forgetProgress()}>
                     Clear all
                   </Button>
-                </div>
-                <Carousel opts={{ align: "start", dragFree: true }} className="group/carousel">
-                  <CarouselContent className="-ml-4">
-                    {inProgress.map((video) => (
-                      <CarouselItem key={video.id} className="basis-[78%] pl-4 sm:basis-1/2 lg:basis-1/3 xl:basis-1/4 2xl:basis-1/5">
-                        <ContinueCard video={video} />
-                      </CarouselItem>
-                    ))}
-                  </CarouselContent>
-                  <CarouselPrevious className="left-2 hidden opacity-0 transition-opacity group-hover/carousel:opacity-100 disabled:opacity-0 sm:flex" />
-                  <CarouselNext className="right-2 hidden opacity-0 transition-opacity group-hover/carousel:opacity-100 disabled:opacity-0 sm:flex" />
-                </Carousel>
-              </section>
+                }
+                items={inProgress}
+                itemKey={itemKey}
+                itemClassName="basis-[78%] sm:basis-1/2 lg:basis-1/3 xl:basis-1/4 2xl:basis-1/5"
+                render={(video) => <ContinueCard video={video} />}
+              />
+            )}
+
+            {showRow.length > 0 && !focus && (
+              <Shelf
+                id="shows"
+                title="Up next from your shows"
+                meta={<ServiceMark backend={showRow[0]!.backend} label className="text-muted-foreground text-xs" />}
+                items={showRow}
+                itemKey={itemKey}
+                render={(video) => <EpisodeCard video={video} />}
+              />
             )}
 
             {sections.map(([label, items]) => (
@@ -302,18 +361,20 @@ export function HomePage() {
                   <h2 id={`s-${label}`} className="font-display text-xl font-semibold">
                     {label}
                   </h2>
-                  <span className="text-muted-foreground text-sm">{items.length} videos</span>
+                  <span className="text-muted-foreground text-sm">
+                    {items.length} {onlyShows ? (items.length === 1 ? "episode" : "episodes") : items.length === 1 ? "video" : "videos"}
+                  </span>
                 </div>
                 {settings.feedLayout === "grid" ? (
                   <div className="grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                     {items.map((video) => (
-                      <VideoCard key={video.id} video={video} />
+                      <VideoCard key={itemKey(video)} video={video} />
                     ))}
                   </div>
                 ) : (
                   <div className="flex max-w-5xl flex-col gap-6">
                     {items.map((video) => (
-                      <VideoRow key={video.id} video={video} />
+                      <VideoRow key={itemKey(video)} video={video} />
                     ))}
                   </div>
                 )}
@@ -349,13 +410,14 @@ function ChannelRail({
         : [...state.data]
             .sort((a, b) => b.unseen - a.unseen)
             .map((channel) => {
-              const active = focus === channel.id;
+              const key = `${channel.backend}:${channel.id}`;
+              const active = focus === key;
               return (
                 <button
-                  key={channel.id}
+                  key={key}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => onFocus(active ? null : channel.id)}
+                  onClick={() => onFocus(active ? null : key)}
                   className={cn(
                     "group flex w-16 shrink-0 flex-col items-center gap-2 transition-opacity",
                     focus && !active && "opacity-45 hover:opacity-80",
@@ -382,7 +444,7 @@ function ChannelRail({
               );
             })}
       <Link
-        to="/subscriptions"
+        to="/following"
         className="text-muted-foreground hover:text-foreground flex w-16 shrink-0 flex-col items-center gap-2"
       >
         <span className="grid size-14 place-items-center rounded-full border border-dashed">
@@ -396,26 +458,49 @@ function ChannelRail({
 
 function ContinueCard({ video }: { video: Video }) {
   const title = useVideoTitle(video);
-  const left = video.duration - (useProgress(video.id) ?? 0);
+  const saved = useProgress(itemKey(video));
+  const left = video.duration - (saved ?? video.progress ?? 0);
   return (
     <div className="group/card relative">
       <Link to={paths.watch(video)} className="block">
         <Thumbnail video={video} size="sm" />
-        <p className="mt-2 line-clamp-1 text-sm font-semibold">{title}</p>
-        <p className="text-muted-foreground text-xs">{formatDuration(left)} left</p>
+        <p className="mt-2 line-clamp-1 text-sm font-semibold">{video.episode ? video.episode.seriesTitle : title}</p>
+        <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+          <ServiceMark backend={video.backend} />
+          {[video.episode ? episodeLabel(video.episode) : null, `${formatDuration(left)} left`].filter(Boolean).join(" · ")}
+        </p>
       </Link>
+      {/* Only positions kept in the Fanoos account can be dropped here; services keep their own. */}
+      {saved !== undefined && (
       <button
         type="button"
         aria-label={`Remove “${title}” from Continue watching`}
         title="Remove from Continue watching"
-        onClick={() => actions.forgetProgress(video.id)}
+        onClick={() => actions.forgetProgress(itemKey(video))}
         className="absolute top-2 right-2 grid size-7 place-items-center rounded-full bg-black/70 text-white opacity-0 backdrop-blur transition-opacity group-hover/card:opacity-100 hover:bg-black/90 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <X className="size-4" />
       </button>
+      )}
     </div>
   );
 }
+
+/** An episode up next from a followed show: wide thumbnail, show name first. */
+function EpisodeCard({ video }: { video: Video }) {
+  return (
+    <Link to={paths.watch(video)} className="group/card block">
+      <Thumbnail video={video} />
+      <p className="text-muted-foreground mt-2 truncate text-xs font-medium">
+        {[video.episode?.seriesTitle, episodeLabel(video.episode)].filter(Boolean).join(" · ")}
+      </p>
+      <p className="mt-0.5 line-clamp-2 text-sm leading-snug font-semibold">{video.title}</p>
+    </Link>
+  );
+}
+
+const byNewest = (a: Video, b: Video) => b.published.localeCompare(a.published);
+const isRecent = (v: Video) => Date.now() - new Date(v.published).getTime() < 7 * DAY;
 
 function FeedSkeleton() {
   return (

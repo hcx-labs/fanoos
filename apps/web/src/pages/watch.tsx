@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
+  AudioLines,
   Check,
   ChevronDown,
   CircleCheck,
@@ -34,29 +35,37 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useData } from "@/hooks/use-data";
 import { formatAgo, formatCount, formatDuration, formatViews } from "@/lib/format";
 import { segmentMeta } from "@/lib/segments";
-import { paths } from "@/lib/paths";
+import { itemKey, paths } from "@/lib/paths";
+import { languageLabel } from "@/components/player/player";
 import { useSource, type CommentSort, type Rating } from "@/lib/source";
 import { accountActions, useAccounts } from "@/lib/session";
 import { actions, useSettings, useStore } from "@/lib/store";
-import type { Channel, Comment, Segment, Video } from "@/lib/types";
+import type { Channel, Comment, Segment, Video, VideoDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
 
 export function WatchPage() {
-  const { id = "" } = useParams();
+  const { backend = "youtube", id = "" } = useParams();
   const [params] = useSearchParams();
   const startAt = Number(params.get("t")) || undefined;
   const source = useSource();
-  const state = useData(() => source.video(id), [source.key, id]);
+  const { can } = useAccounts();
+  const state = useData(() => source.video({ backend, id }), [source.key, backend, id]);
   const { dearrow } = useSettings();
   const loaded = state.data?.video;
   useTitle(loaded ? (dearrow && loaded.altTitle ? loaded.altTitle : loaded.title) : state.status === "loading" ? null : "Video unavailable");
   const [theater, setTheater] = useState(false);
   const [time, setTime] = useState(0);
   const player = useRef<PlayerHandle>(null);
+  // Switching an episode's audio language loads another id (each dub is its own episode).
+  // Keep the page as it is while that loads, so only the stream changes.
+  const shown = useRef<VideoDetail | null>(null);
+  if (state.data) shown.current = state.data;
+  const sameEpisode = shown.current?.video.backend === backend && shown.current.video.episode?.versions?.some((v) => v.id === id);
+  const detail = state.data ?? (state.status === "loading" && sameEpisode ? shown.current : null);
 
-  if (state.status === "loading") return <WatchSkeleton />;
-  if (state.status === "error" || !state.data)
+  if (!detail && state.status === "loading") return <WatchSkeleton />;
+  if (!detail)
     return (
       <Empty className="mt-24">
         <EmptyHeader>
@@ -69,7 +78,7 @@ export function WatchPage() {
       </Empty>
     );
 
-  const { video, channel, next, stream } = state.data;
+  const { video, channel, next, stream } = detail;
   const seek = (t: number) => {
     player.current?.seek(t);
     player.current?.play();
@@ -87,7 +96,8 @@ export function WatchPage() {
           className={cn("min-w-0", theater ? "xl:col-span-2" : "xl:col-start-1 xl:row-start-1")}
         >
           <Player
-            key={video.id}
+            // One player per episode, whichever language: a dub switch swaps only its stream.
+            key={video.episode ? `${video.backend}:${video.episode.seriesId}:${video.episode.season}:${video.episode.number}` : itemKey(video)}
             ref={player}
             video={video}
             stream={stream}
@@ -100,7 +110,7 @@ export function WatchPage() {
         </div>
         <div className={"min-w-0 xl:col-start-1 xl:row-start-2"}>
           <VideoInfo video={video} channel={channel} onSeek={seek} />
-          <Comments video={video} />
+          {can(video.backend, "comments") && <Comments video={video} />}
         </div>
         <aside className={cn("mt-8 min-w-0 xl:col-start-2 xl:mt-0", theater ? "xl:row-start-2 xl:pt-5" : "xl:row-span-2 xl:row-start-1")}>
           <SidePanel video={video} next={next} time={time} onSeek={seek} />
@@ -113,14 +123,32 @@ export function WatchPage() {
 function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel; onSeek: (t: number) => void }) {
   const settings = useSettings();
   const title = useVideoTitle(video);
-  const later = useStore((s) => s.watchLater.includes(video.id));
-  const { active, accounts } = useAccounts();
+  const later = useStore((s) => s.watchLater.includes(itemKey(video)));
+  const { accountsOn, can, bySlug } = useAccounts();
+  const accounts = accountsOn(video.backend);
+  const writeOption = bySlug(video.backend)?.info?.link.writeOption;
+  const ratings = can(video.backend, "ratings");
   const [expanded, setExpanded] = useState(false);
+  // "Read more" only when the three-line clamp actually hides something.
+  const descriptionRef = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useEffect(() => {
+    const el = descriptionRef.current;
+    if (!el || expanded) return;
+    const check = () => setClipped(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [video.description, expanded]);
   const source = useSource();
 
-  // Ratings act as the default account when it can, else the first account that can.
-  const actor = active?.canWrite ? active : accounts.find((a) => a.canWrite && !a.needsRelink);
-  const initial = useData(() => (actor ? source.rating(actor.id, video.id).then((r) => r.rating) : Promise.resolve<Rating>("none")), [actor?.id, video.id]);
+  // Ratings act as the default account when it can, else the first account on this service that can.
+  const actor = accounts.find((a) => a.canWrite);
+  const initial = useData(
+    () => (actor && ratings ? source.rating(actor.id, video.id).then((r) => r.rating) : Promise.resolve<Rating>("none")),
+    [actor?.id, video.id, ratings],
+  );
   const [vote, setVote] = useState<Rating | null>(null);
   const current: Rating = vote ?? initial.data ?? "none";
 
@@ -130,10 +158,13 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
 
   const rateAs = async (rating: Rating) => {
     if (!actor) {
-      const first = accounts.find((a) => !a.needsRelink);
+      const first = accounts[0];
       toast("Liking needs an account that allows actions", {
         description: "Linked accounts are read-only until you allow actions.",
-        action: first ? { label: "Allow actions", onClick: () => accountActions.link(first.backendId, "settings", { write: true, accountId: first.id }) } : undefined,
+        action:
+          first && writeOption
+            ? { label: "Allow actions", onClick: () => void accountActions.link(first.backendId, "settings", { write: true, accountId: first.id }) }
+            : undefined,
       });
       return;
     }
@@ -154,6 +185,20 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
 
   return (
     <section className="@container mt-5">
+      {video.episode && (
+        <p className="text-muted-foreground mb-1.5 flex flex-wrap items-center gap-x-2 text-sm">
+          <Link to={paths.channelOf(video)} className="text-foreground font-semibold hover:underline">
+            {video.episode.seriesTitle}
+          </Link>
+          {[video.episode.seasonTitle && video.episode.seasonTitle !== video.episode.seriesTitle ? video.episode.seasonTitle : null, video.episode.number ? `Episode ${video.episode.number}` : null]
+            .filter(Boolean)
+            .map((part) => (
+              <span key={part} className="before:mr-2 before:content-['·']">
+                {part}
+              </span>
+            ))}
+        </p>
+      )}
       <div className="flex items-start gap-2">
         <h1 className="font-display text-xl leading-tight font-semibold text-pretty sm:text-2xl">{title}</h1>
         {community && (
@@ -190,6 +235,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {ratings && (
           <div className="relative">
             <ButtonGroup>
               <Button
@@ -210,10 +256,10 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
                 onClick={() => void rateAs("dislike")}
               >
                 <ThumbsDown className={cn(current === "dislike" && "fill-current text-dislike")} />
-                {settings.dislikes && <span className="tabular-nums">{formatCount(dislikes)}</span>}
+                {settings.dislikes && can(video.backend, "dislikes") && <span className="tabular-nums">{formatCount(dislikes)}</span>}
               </Button>
             </ButtonGroup>
-            {settings.dislikes && (
+            {settings.dislikes && can(video.backend, "dislikes") && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="bg-dislike/60 absolute inset-x-4 -bottom-2 h-[3px] overflow-hidden rounded-full" aria-label={`${Math.round(ratio * 100)}% liked`}>
@@ -226,6 +272,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
               </Tooltip>
             )}
           </div>
+          )}
           <Button
             variant="secondary"
             className="rounded-full px-3 @4xl:px-4"
@@ -242,7 +289,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
             className="rounded-full px-3 @4xl:px-4"
             aria-label={later ? "Remove from Watch later" : "Save to Watch later"}
             aria-pressed={later}
-            onClick={() => actions.toggleWatchLater(video.id)}
+            onClick={() => actions.toggleWatchLater(itemKey(video))}
           >
             {later ? <CircleCheck className="text-brand-strong" /> : <ListPlus />} <span className="hidden @4xl:inline">{later ? "Saved" : "Save"}</span>
           </Button>
@@ -252,11 +299,11 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
       <div className="bg-secondary/70 mt-5 rounded-2xl p-4 text-sm">
         <div className="flex min-w-0 items-center gap-3 font-medium whitespace-nowrap">
           <span className="shrink-0">
-            {[formatViews(video), formatAgo(video.published)].filter(Boolean).join(" · ")}
+            {[video.episode ? null : formatViews(video), formatAgo(video.published), video.rating, video.premium ? "Premium" : null].filter(Boolean).join(" · ")}
           </span>
           {segments.length > 0 && <SegmentSummary segments={segments} />}
         </div>
-        <div className={cn("relative mt-2 break-words whitespace-pre-line", !expanded && "line-clamp-3")}>
+        <div ref={descriptionRef} className={cn("relative mt-2 break-words whitespace-pre-line", !expanded && "line-clamp-3")}>
           <RichText text={video.description} onSeek={onSeek} maxSeconds={video.duration} />
         </div>
         {expanded && chapters.length > 1 && (
@@ -274,12 +321,49 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
             </ul>
           </div>
         )}
-        <button type="button" className="mt-2 inline-flex items-center gap-1 font-semibold" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
-          {expanded ? "Show less" : "…more"}
-          <ChevronDown className={cn("size-4 transition-transform", expanded && "rotate-180")} />
-        </button>
+        {(clipped || expanded || chapters.length > 1) && (
+          <button type="button" className="mt-2 inline-flex items-center gap-1 font-semibold" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
+            {expanded ? "Show less" : "Read more"}
+            <ChevronDown className={cn("size-4 transition-transform", expanded && "rotate-180")} />
+          </button>
+        )}
       </div>
+      {(video.episode?.versions?.length ?? 0) > 1 && <AudioVersions video={video} />}
     </section>
+  );
+}
+
+/** Other languages of this episode (each dub is its own id), as quick switches. */
+function AudioVersions({ video }: { video: Video }) {
+  const versions = [...(video.episode?.versions ?? [])].sort(
+    (a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)) || languageLabel(a.audio).localeCompare(languageLabel(b.audio)),
+  );
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted-foreground mr-1 inline-flex items-center gap-1.5 text-xs font-medium">
+        <AudioLines className="size-3.5" /> Audio
+      </span>
+      {versions.map((v) =>
+        v.audio === video.episode?.audio ? (
+          <span key={v.id} className="bg-foreground text-background rounded-full px-3 py-1 text-xs font-medium">
+            {languageLabel(v.audio)}
+            {v.original && <span className="ml-1 opacity-70">· original</span>}
+          </span>
+        ) : (
+          <Link
+            key={v.id}
+            to={paths.watch({ backend: video.backend, id: v.id })}
+            replace
+            state={{ samePage: true }}
+            onClick={() => actions.languages({ audio: v.audio })}
+            className="bg-secondary hover:bg-accent rounded-full px-3 py-1 text-xs font-medium"
+          >
+            {languageLabel(v.audio)}
+            {v.original && <span className="text-muted-foreground ml-1">· original</span>}
+          </Link>
+        ),
+      )}
+    </div>
   );
 }
 
@@ -303,11 +387,12 @@ function SidePanel({ video, next, time, onSeek }: { video: Video; next: Video[];
       </div>
       <TabsContent value="next" className="min-h-0 overflow-y-auto p-3">
         <p className="text-muted-foreground mb-2 flex items-center gap-1.5 px-1 text-xs">
-          <Info className="size-3.5" /> More from this channel, then channels you follow. No recommendations.
+          <Info className="size-3.5" />
+          {video.episode ? "The rest of this season, in order. No recommendations." : "More from this channel, then channels you follow. No recommendations."}
         </p>
         <div className="flex flex-col gap-1 px-2">
           {next.map((v) => (
-            <VideoRow key={v.id} video={v} size="sm" />
+            <VideoRow key={itemKey(v)} video={v} size="sm" />
           ))}
         </div>
       </TabsContent>
@@ -342,7 +427,7 @@ function SidePanel({ video, next, time, onSeek }: { video: Video; next: Video[];
 function Comments({ video }: { video: Video }) {
   const [sort, setSort] = useState<CommentSort>("top");
   const source = useSource();
-  const first = useData(() => source.comments(video.id, sort), [source.key, video.id, sort]);
+  const first = useData(() => source.comments(video, sort), [source.key, video.backend, video.id, sort]);
   const [more, setMore] = useState<{ comments: Comment[]; next?: string; loading: boolean }>({ comments: [], loading: false });
   // Extra pages reset whenever the first page reloads.
   const [seen, setSeen] = useState(first);
@@ -357,7 +442,7 @@ function Comments({ video }: { video: Video }) {
     if (!next) return;
     setMore((m) => ({ ...m, loading: true }));
     try {
-      const page = await source.comments(video.id, sort, next);
+      const page = await source.comments(video, sort, next);
       setMore((m) => ({ comments: [...m.comments, ...page.comments], next: page.next, loading: false }));
     } catch (e) {
       setMore((m) => ({ ...m, loading: false }));
@@ -378,7 +463,7 @@ function Comments({ video }: { video: Video }) {
           </TabsList>
         </Tabs>
       </div>
-      <CommentComposer videoId={video.id} onPosted={(c) => setMore((m) => ({ ...m, comments: [c, ...m.comments] }))} />
+      <CommentComposer video={video} onPosted={(c) => setMore((m) => ({ ...m, comments: [c, ...m.comments] }))} />
 
       <div className="mt-6 space-y-6">
         {first.status === "loading" &&
@@ -394,7 +479,7 @@ function Comments({ video }: { video: Video }) {
         {first.status === "error" && <p className="text-muted-foreground text-sm">Comments couldn't be loaded. {first.error.message}</p>}
         {first.status === "ready" && !first.data.comments.length && <p className="text-muted-foreground text-sm">No comments, or comments are turned off.</p>}
         {[...(first.data?.comments ?? []), ...more.comments].map((comment) => (
-          <CommentItem key={comment.id} comment={comment} />
+          <CommentItem key={comment.id} comment={comment} backend={video.backend} />
         ))}
         {next && (
           <Button variant="outline" className="rounded-full" onClick={() => void loadMore()} disabled={more.loading}>
@@ -406,7 +491,7 @@ function Comments({ video }: { video: Video }) {
   );
 }
 
-function CommentItem({ comment, reply }: { comment: Comment; reply?: boolean }) {
+function CommentItem({ comment, reply, backend }: { comment: Comment; reply?: boolean; backend?: string }) {
   const source = useSource();
   const [open, setOpen] = useState(false);
   const [replies, setReplies] = useState<{ items: Comment[]; next?: string; loading: boolean; loaded: boolean }>({ items: [], loading: false, loaded: false });
@@ -414,7 +499,7 @@ function CommentItem({ comment, reply }: { comment: Comment; reply?: boolean }) 
   const load = async (token: string) => {
     setReplies((r) => ({ ...r, loading: true }));
     try {
-      const page = await source.replies(token);
+      const page = await source.replies(backend, token);
       setReplies((r) => ({ items: [...r.items, ...page.comments], next: page.next, loading: false, loaded: true }));
     } catch (e) {
       setReplies((r) => ({ ...r, loading: false }));
@@ -468,7 +553,7 @@ function CommentItem({ comment, reply }: { comment: Comment; reply?: boolean }) 
             {open && (
               <div className="mt-3 space-y-4">
                 {replies.items.map((r) => (
-                  <CommentItem key={r.id} comment={r} reply />
+                  <CommentItem key={r.id} comment={r} reply backend={backend} />
                 ))}
                 {replies.loading && <Spinner className="text-muted-foreground" />}
                 {replies.next && !replies.loading && (
@@ -559,11 +644,12 @@ function SegmentSummary({ segments }: { segments: Segment[] }) {
 }
 
 /** Post a comment as an account that allows actions. */
-function CommentComposer({ videoId, onPosted }: { videoId: string; onPosted: (comment: Comment) => void }) {
-  const { accounts, active } = useAccounts();
+function CommentComposer({ video, onPosted }: { video: Video; onPosted: (comment: Comment) => void }) {
+  const videoId = video.id;
+  const { accountsOn } = useAccounts();
   const source = useSource();
-  const writable = accounts.filter((a) => a.canWrite && !a.needsRelink);
-  const [as, setAs] = useState((active?.canWrite ? active : writable[0])?.id ?? "");
+  const writable = accountsOn(video.backend).filter((a) => a.canWrite);
+  const [as, setAs] = useState(writable[0]?.id ?? "");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   if (!writable.length)

@@ -18,8 +18,11 @@ export type Segment = { start: number; end: number; category: SegmentCategory };
 
 export type Chapter = { start: number; title: string };
 
-/** Services that can back a linked account. Only YouTube today. */
-export type ProviderKind = "youtube";
+export * from "./protocol.ts";
+import type { BackendInfo } from "./protocol.ts";
+
+/** The service a backend talks to. Open-ended: any backend speaking the provider protocol can join. */
+export type ProviderKind = "youtube" | "crunchyroll" | (string & {});
 
 /** The viewer's own app account. */
 export type Profile = {
@@ -40,13 +43,27 @@ export type AgeRestrictedSetup =
   | { status: "ready" }
   | { status: "error"; error: string };
 
-/** A server that talks to a service for the profile. Each profile starts with "This server". */
-export type Backend = { id: string; kind: ProviderKind; label: string; url: string; local: boolean };
+/**
+ * A backend service the profile uses: one per provider (YouTube, Crunchyroll…). Fanoos core talks
+ * to every backend through the same provider protocol (protocol.ts).
+ */
+export type Backend = {
+  id: string;
+  /** Short name used in app URLs, e.g. "youtube" in /watch/youtube/<id>. */
+  slug: string;
+  kind: ProviderKind;
+  label: string;
+  url: string;
+  local: boolean;
+  /** What the backend says it can do; null while it can't be reached. */
+  info: BackendInfo | null;
+};
 
 /** A service account (e.g. a Google account) linked to the profile through a backend. */
 export type LinkedAccount = {
   id: string;
   backendId: string;
+  provider: ProviderKind;
   /** The viewer's nickname for this account, e.g. "Personal". */
   label: string;
   name: string;
@@ -56,8 +73,10 @@ export type LinkedAccount = {
   inFeed: boolean;
   /** Set when the token was revoked or expired and the account must be linked again. */
   needsRelink?: boolean;
-  /** Granted permission to subscribe, rate and comment (youtube.force-ssl). */
+  /** Allowed to act as the account (subscribe, rate, comment, edit a watchlist). */
   canWrite: boolean;
+  /** Plan or tier the service reports, e.g. "Premium". */
+  plan?: string;
 };
 
 /** Everything the app needs at startup. */
@@ -66,16 +85,22 @@ export type Me = {
   backends: Backend[];
   accounts: LinkedAccount[];
   defaultAccountId: string | null;
-  /** Whether the server has Google OAuth configured (linking is impossible without it). */
-  googleConfigured: boolean;
 };
 
-/** Linked-account ids an item reached the viewer through (set when merging). */
-type Via = { via?: string[] };
+/**
+ * Linked-account ids an item reached the viewer through, and the backend it came from
+ * (both set by Fanoos core when merging; backends leave them out or use account refs).
+ */
+type Via = { via?: string[]; backend?: string };
 
+/** Something to follow: a YouTube channel, or a show (series) on a streaming service. */
 export type Channel = Via & {
   id: string;
   provider: ProviderKind;
+  /** "series" for shows with seasons and episodes. Defaults to "channel". */
+  kind?: "channel" | "series";
+  /** Portrait key art (shows). */
+  poster?: string;
   name: string;
   handle?: string;
   avatar?: string;
@@ -85,12 +110,32 @@ export type Channel = Via & {
   /** The viewer's own grouping (Tech, Music…), stored per profile. */
   group?: string;
   verified?: boolean;
-  /** Uploads in the last 48 hours. */
+  /** New uploads or episodes in the last 48 hours. */
   unseen: number;
+  /** A public feed (RSS/Atom) for following without an account. */
+  feedUrl?: string;
   videoCount?: number;
   live?: boolean;
 };
 
+/** Season and episode details for episodic content. */
+export type EpisodeInfo = {
+  seriesId: string;
+  seriesTitle: string;
+  seasonId?: string;
+  seasonTitle?: string;
+  season?: number;
+  /** As the service labels it ("12", "SP"). */
+  number?: string;
+  /** Audio language of this version, BCP 47 ("ja-JP"). */
+  audio?: string;
+  /** The same episode in other languages: each is its own playable id. */
+  versions?: { audio: string; id: string; original?: boolean }[];
+  subtitles?: string[];
+  nextId?: string;
+};
+
+/** Anything playable: a YouTube video or an episode. */
 export type Video = Via & {
   id: string;
   provider: ProviderKind;
@@ -114,8 +159,13 @@ export type Video = Via & {
   upcoming?: boolean;
   /** YouTube's category, e.g. "Gaming" (feed videos). */
   category?: string;
-  /** Seconds watched, tracked on the device. */
+  /** Seconds watched (from the service when it tracks progress itself). */
   progress?: number;
+  episode?: EpisodeInfo;
+  /** Needs a paid plan on the service. */
+  premium?: boolean;
+  /** Mature rating label from the service, e.g. "16+". */
+  rating?: string;
   // Detail-only fields.
   likes?: number;
   /** Estimated by Return YouTube Dislike. */
@@ -125,9 +175,23 @@ export type Video = Via & {
   commentCount?: number;
 };
 
+export type Subtitle = {
+  /** BCP 47 ("en-US"). */
+  locale: string;
+  label: string;
+  url: string;
+  /** "ass" needs a styled renderer; "vtt" plays natively. */
+  format: "ass" | "vtt";
+};
+
 export type Stream = {
   /** DASH manifest URL (adaptive, all qualities). */
   dash?: string;
+  /** Encrypted streams: licence server URLs per DRM system, called by the browser's own CDM. */
+  drm?: { widevine?: string; playready?: string };
+  subtitles?: Subtitle[];
+  /** Playback session kept by the service (stream limits): ping while playing, end when done. */
+  session?: { keepAlive?: string; release?: string; everySeconds?: number };
   /** HLS manifest URL (live streams). */
   hls?: string;
   /** A single progressive file, when the service offers one. */
@@ -137,6 +201,15 @@ export type Stream = {
 };
 
 export type VideoDetail = { video: Video; channel: Channel; next: Video[]; stream: Stream };
+
+/** A channel or show page. Shows split into sections (seasons); channels usually have none. */
+export type ChannelPage = {
+  channel: Channel;
+  videos: Video[];
+  sections?: { id: string; label: string; count?: number }[];
+  /** The section `videos` belong to. */
+  section?: string;
+};
 
 export type Comment = {
   id: string;
@@ -158,7 +231,7 @@ export type CommentPage = { comments: Comment[]; count?: number; next?: string }
 
 export type CommentSort = "top" | "new";
 
-export type Playlist = {
+export type Playlist = Via & {
   id: string;
   accountId: string;
   title: string;

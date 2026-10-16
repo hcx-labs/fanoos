@@ -29,32 +29,18 @@ export const config = {
   secret: loadSecret(),
   /** Display name for passkey prompts. */
   appName: env.APP_NAME ?? "Fanoos",
-  google: {
-    clientId: env.GOOGLE_CLIENT_ID ?? "",
-    clientSecret: env.GOOGLE_CLIENT_SECRET ?? "",
-    get configured() {
-      return Boolean(this.clientId && this.clientSecret);
-    },
-    redirectUri: new URL("/api/links/google/callback", publicUrl).toString(),
-  },
-  /** Redis for the shared response cache; empty falls back to a small in-memory cache. */
-  redisUrl: env.REDIS_URL ?? "",
-  /** How long cached YouTube responses live. */
-  cacheTtlSeconds: Number(env.CACHE_TTL_SECONDS ?? 600),
-  /** After expiring, how long cached responses are still served while a refresh runs. */
-  cacheStaleSeconds: Number(env.CACHE_STALE_SECONDS ?? 86_400),
-  /** YouTube Data API key for public lookups (video stats, categories); saves linked accounts' quota. */
-  youtubeApiKey: env.YOUTUBE_API_KEY ?? "",
-  /** Invidious companion: generates YouTube's anti-bot tokens and streams video. */
-  companion: {
-    url: (env.COMPANION_URL ?? "").replace(/\/$/, ""),
-    /** Optional signed-in instance, used only for videos YouTube age-restricts. */
-    signedInUrl: (env.COMPANION_SIGNED_IN_URL ?? "").replace(/\/$/, ""),
-    secret: env.COMPANION_SECRET ?? "",
-    get configured() {
-      return Boolean(this.url && this.secret);
-    },
-  },
+  /**
+   * Backend services (provider protocol v1), as "slug=url" pairs: e.g.
+   * BACKENDS=youtube=http://127.0.0.1:8788,crunchyroll=http://127.0.0.1:8789
+   * The slug appears in app URLs (/watch/youtube/<id>); the order is the display order.
+   */
+  backends: (env.BACKENDS ?? "youtube=http://127.0.0.1:8788")
+    .split(",")
+    .map((pair) => pair.trim().split("="))
+    .filter((p): p is [string, string] => Boolean(p[0] && p[1]))
+    .map(([slug, url]) => ({ slug: slug.trim(), url: url.trim().replace(/\/$/, "") })),
+  /** Shared secret every backend checks. */
+  backendToken: env.BACKEND_TOKEN ?? "",
   /**
    * OpenID Connect sign-in. Setting OIDC_ISSUER turns it on, and then password
    * and passkey sign-in are disabled entirely.

@@ -1,14 +1,14 @@
 /*
  * Image and video proxy. The browser never talks to Google: every thumbnail and
- * avatar is rewritten to /api/img, and every media segment to /api/media (which
+ * avatar is rewritten to /public/img, and every media segment to /public/media (which
  * forwards to the local streaming companion). URLs carry an HMAC signature, so
- * the proxy only fetches what this server handed out.
+ * the proxy only fetches what this backend handed out.
  */
 import { Hono } from "hono";
 import { config } from "./config.ts";
 import { sign, verifySignature } from "./crypto.ts";
-import { fail } from "./http.ts";
-import { signedInReady, signedInUrl } from "./youtube/signed-in.ts";
+import { fail, type ServiceEnv } from "../../kit/src/service.ts";
+import { signedInReady, signedInUrl } from "./signed-in.ts";
 
 const imageHosts = /^(i\d?\.ytimg\.com|yt\d?\.ggpht\.com|yt\d?\.googleusercontent\.com|lh\d\.googleusercontent\.com)$/;
 
@@ -20,16 +20,16 @@ export function proxyImage(url: string | undefined): string {
   if (!url) return "";
   const absolute = url.startsWith("//") ? `https:${url}` : url;
   const u = encode(absolute);
-  return `/api/img?u=${u}&s=${sign(`img:${u}`)}`;
+  return `/public/img?u=${u}&s=${sign(`img:${u}`)}`;
 }
 
 /** Which companion a stream comes from: anonymous ("a") or signed-in ("s"). */
 export type CompanionInstance = "a" | "s";
 
-/** Absolute URL that streams a companion /videoplayback path through this server. */
-export function proxyCompanion(path: string, origin: string, instance: CompanionInstance): string {
+/** URL (under the browser-facing base) that streams a companion /videoplayback path through this backend. */
+export function proxyCompanion(path: string, base: string, instance: CompanionInstance): string {
   const p = encode(path);
-  return `${origin}/api/media?i=${instance}&p=${p}&s=${sign(`media:${instance}:${p}`)}`;
+  return `${base}/public/media?i=${instance}&p=${p}&s=${sign(`media:${instance}:${p}`)}`;
 }
 
 function target(kind: "img", u: string | undefined, s: string | undefined, hosts: RegExp): URL {
@@ -39,7 +39,7 @@ function target(kind: "img", u: string | undefined, s: string | undefined, hosts
   return url;
 }
 
-export const mediaRoutes = new Hono();
+export const mediaRoutes = new Hono<ServiceEnv>();
 
 mediaRoutes.get("/img", async (c) => {
   const url = target("img", c.req.query("u"), c.req.query("s"), imageHosts);

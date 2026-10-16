@@ -1,80 +1,121 @@
-# Fanoos
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo-light.svg" alt="Fanoos" width="96">
+  </picture>
+</p>
+
+<h1 align="center">Fanoos</h1>
+
+<p align="center">One feed for YouTube and Crunchyroll. No recommendations, no ads, no tracking. Self-hosted.</p>
+
+![Home: a merged feed with a rotating hero](docs/screenshots/home.jpg)
 
 *Fanoos* (فانوس) is Persian/Urdu for "lantern". *Fanoos-e-khayal*, the "lantern of imagination", was the revolving magic lantern that cast moving pictures before cinema.
 
-A privacy-first video client. This is the frontend only, running on demo data. The name is set in `src/lib/brand.ts`.
+A self-hosted video client that puts several services in one place: your YouTube subscriptions and your Crunchyroll watchlist in a single feed, with no recommendations, no ads and no tracking. YouTube is watched signed out through your own server; Crunchyroll (which only works signed in) plays its DRM-protected streams in your own browser.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Continue watching and up next from your shows](docs/screenshots/home-shelves.jpg) | ![The home page in light mode](docs/screenshots/home-light.jpg) |
+| **Home:** Continue watching across services, and up next from your shows | **Light mode** |
+| ![A YouTube video with sponsor segments and dislikes](docs/screenshots/watch-youtube.jpg) | ![A Crunchyroll episode with audio languages](docs/screenshots/watch-episode.jpg) |
+| **YouTube:** SponsorBlock, dislikes, comments, no recommendations | **Crunchyroll:** DRM playback, subtitles, every dub, intro skipping |
+| ![A show with seasons and episodes](docs/screenshots/show.jpg) | ![Search across services](docs/screenshots/search.jpg) |
+| **Shows** with seasons and episodes | **Search** across every service |
+| ![Following: channels and shows](docs/screenshots/following.jpg) | ![Linked accounts per service](docs/screenshots/settings-accounts.jpg) |
+| **Following:** channels and shows, grouped and hideable | **Linked accounts** on every service |
 
 ## Model
 
-- **Fanoos account (`Profile`):** your own sign-in. It owns everything below and syncs it across devices. Watch history never leaves the device.
-- **Backend:** a server that talks to one service for you. A backend has a provider kind (only `youtube` today), a label and a URL.
-- **Linked account:** a service account signed in through a backend. A profile can hold many, across many backends: YouTube acc1 and acc2 on the home server, acc3 on another instance, and so on.
-- **The merged feed:** subscriptions from every linked account marked "in feed" are merged and deduplicated. Each item records which accounts it came through (`via`).
-- **Writes:** likes, comments and subscribing use the **default** account. The subscribe control and the comment box let you pick a different one.
+- **Fanoos account:** your own sign-in (passkeys, password, or single sign-on). It holds everything below and syncs it across devices: history, positions, Watch later, preferences.
+- **Backend:** a separate service that talks to one provider: `services/youtube`, `services/crunchyroll`. Fanoos core talks to every backend through one generic [provider protocol](packages/shared/src/protocol.ts) and has no provider-specific code.
+- **Linked account:** an account on a provider, linked through its backend. A Fanoos account can hold many, across services. The backend keeps the credentials; core keeps only an opaque reference.
+- **The merged feed:** what every linked account follows (YouTube subscriptions, Crunchyroll watchlists) merged into one feed, with each item marked with the accounts it came through.
+- **Actions:** liking, commenting and following act as the default account on that service; the follow control and comment box let you pick another.
+
+## Running it
 
 ```sh
+git submodule update --init
 npm install
-cp apps/server/.env.example apps/server/.env   # then add your Google OAuth client (below)
-npm run dev                                     # web :5180, API :8787, companion :8282, Redis :6379
+cp apps/server/.env.example apps/server/.env
+cp services/youtube/.env.example services/youtube/.env
+cp services/crunchyroll/.env.example services/crunchyroll/.env   # optional
+npm run dev
 ```
 
-Needs Node 24+, [Deno](https://deno.com) (`brew install deno`) for the streaming companion, and Redis (`brew install redis`) for the response cache. After cloning, run `git submodule update --init`.
+`npm run dev` starts Redis (:6379), the streaming companion (:8282), the YouTube backend (:8788), the Crunchyroll backend (:8789), Fanoos core (:8787) and the web app (:5180). Open **http://localhost:5180** (not 127.0.0.1: passkeys need a hostname) and create an account. The first account is the server's owner.
 
-### Single sign-on (OIDC)
+Needs Node 24+, [Deno](https://deno.com) (`brew install deno`) for the streaming companion, and Redis (`brew install redis`).
 
-Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (optionally `OIDC_SCOPES` and `OIDC_NAME`, the button label) in `apps/server/.env`, and register `${PUBLIC_URL}/api/auth/oidc/callback` as a redirect URI with your provider (Authentik, Keycloak, Authelia, and so on). When OIDC is on:
-
-- The sign-in page shows only "Continue with <name>". The server refuses password and passkey sign-in, sign-up and passkey registration, and treats existing password or passkey sessions as signed out.
-- Accounts are created automatically on first sign-in, with no approval step.
-- If the provider marks the email as verified and a Fanoos account already uses that email, the two are linked (keeping its data and ownership). An unverified email that matches an existing account is refused.
-- The flow is the authorization code flow with PKCE, `state` (bound to the browser) and `nonce`. ID tokens are checked against the provider's JWKS, issuer, audience and expiry.
-
-Signing out ends the Fanoos session only, not the provider's.
-
-### Caching (Redis)
-
-`npm run redis` starts a local, memory-only Redis (256 MB, least-recently-used eviction, nothing written to disk). The API caches YouTube responses there for `CACHE_TTL_SECONDS` (default 600): video and channel pages, search, playlists, channel uploads, video stats and categories, SponsorBlock, Return YouTube Dislike, DeArrow, playability and stream manifests, and each account's ratings. The cache survives API restarts. Failures are never cached. Without `REDIS_URL`, a bounded in-memory cache is used instead.
-
-Channel uploads come from YouTube's RSS feeds, which often return 404 or 500. When they do, the API falls back to the channel's videos tab through YouTube.js.
-
-### Streaming (Invidious companion)
-
-YouTube only streams the first chunk of a video unless the request carries a valid anti-bot (PO) token. [Invidious companion](https://github.com/iv-org/invidious-companion) (pinned submodule in `vendor/`) generates those tokens and streams media. It listens on 127.0.0.1 only; the API rewrites its stream URLs to the signed `/api/media` proxy. `COMPANION_SECRET` in `apps/server/.env` must be exactly 16 characters.
-
-Age-restricted videos need a signed-in session. `npm run companion:signed-in` starts a second instance (port 8283, `COMPANION_SIGNED_IN_URL`). On first start, its log shows a code to enter at google.com/device. The API only uses it for videos YouTube age-restricts, so ordinary viewing stays signed out. Use a secondary Google account: that account's playback of those videos is visible to Google, and unofficial clients carry some risk of account restrictions.
-
-Open **http://localhost:5180** (not 127.0.0.1; passkeys need a hostname) and create an account. Search, playback, comments and channels work right away; the subscriptions feed needs a linked YouTube account.
-
-### Linking real YouTube accounts (Google OAuth)
-
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project.
-2. **APIs & Services → Library**: enable **YouTube Data API v3**.
-3. **Google Auth Platform → Branding**: set an app name and support email. **Audience**: External, and add every Google account you'll link as a **test user**. **Data access**: add the scope `https://www.googleapis.com/auth/youtube.readonly`.
-4. **Clients → Create client → Web application**. Authorized JavaScript origin `http://localhost:5180`; authorized redirect URI `http://localhost:5180/api/links/google/callback`.
-5. Put the client ID and secret in `apps/server/.env`, then restart `npm run dev`.
-6. In the app: **Settings → Linked accounts → Link an account → Continue with Google**. Repeat for each account.
-
-While the Google app is in "Testing", only listed test users can link, and Google expires their refresh tokens after 7 days; the app then shows **Link again**. Publishing the app (and Google's verification for the YouTube scope) removes both limits.
+Core and every backend share one secret, `BACKEND_TOKEN`: set the same random value in all three `.env` files (`openssl rand -base64 32`). Core finds the backends through `BACKENDS` (`slug=url` pairs; the slug appears in app URLs, e.g. `/watch/youtube/<id>`).
 
 ## Layout
 
 npm workspaces:
 
-- `apps/web`: the React app (Vite, Tailwind v4, shadcn kit components in `src/components/ui/`, copied from `../shadcn-ui-kit-dashboard`).
-- `apps/server`: the API (Hono on Node 24+, runs TypeScript directly; SQLite via `node:sqlite`).
-- `packages/shared`: types shared by both. Types only, no runtime code.
+- `apps/web`: the React app (Vite, Tailwind v4, shadcn kit components in `src/components/ui/`).
+- `apps/server`: **Fanoos core** (Hono on Node 24+, runs TypeScript directly; SQLite via `node:sqlite`). Accounts and sessions, the linked-account registry, app data, merging across backends, and a proxy to backends' public routes (`/api/b/<slug>/public/…`).
+- `services/youtube`, `services/crunchyroll`: **backends**, one process each, each with its own database for credentials.
+- `services/kit`: what every backend is built on (the protocol server, shared Redis cache, signing). Imported by relative path, since Node won't run TypeScript from `node_modules`.
+- `packages/shared`: types shared by everything, including the provider protocol. Types only.
+- `vendor/invidious-companion`: pinned submodule, YouTube streaming.
 
-## How the server works
+### The provider protocol
 
-- **Fanoos accounts:** passkeys (WebAuthn) or passwords (scrypt). Sessions use an HttpOnly, SameSite=Lax cookie. Every write is checked against the app's Origin.
-- **Linked accounts:** Google OAuth with PKCE, scope `youtube.readonly`. Refresh tokens are encrypted with AES-256-GCM. Unlinking also revokes access at Google.
-- **Feed:** each linked account's subscription list comes from the Data API, refreshed every 6 hours. New videos come from each channel's public RSS feed (no quota). Results are merged across accounts, Shorts are dropped, and the feed is enriched with durations and views (one batched Data API call per 50 videos) and DeArrow titles.
-- **Video, comments, channels, search:** YouTube.js, signed out.
-- **Playback:** DASH manifests and media from Invidious companion, played with dash.js. Thumbnails are 1280×720.
-- **Privacy:** every thumbnail, avatar and media segment goes through `/api/img` and `/api/media`, which only fetch URLs the server signed itself. The browser never contacts Google. SponsorBlock and DeArrow are queried by a hash prefix.
-- **Up next:** this channel's uploads, then related videos only from channels you follow. No recommendations.
+JSON over HTTP under `/v1`, authenticated with `BACKEND_TOKEN`: `info` (name, features, how linking works, link hosts), linking (redirect or device-code flows, polled by core), `following`, `feed`, `continue`, `search`, `videos`, `channels` (with sections, for seasons), `resolve` (pasted links), and actions (`follow`, `rating`, `comments`, `progress`). Browser-facing URLs (images, manifests, licences) are `/public/…` paths that core rewrites and proxies. A backend lists only the features it supports, and the app shows only those. See [`protocol.ts`](packages/shared/src/protocol.ts); adding a service means writing a backend, not changing core or the app.
+
+## YouTube backend
+
+- **Linking:** Google OAuth with PKCE, scope `youtube.readonly`, plus `youtube.force-ssl` only if you allow actions. Refresh tokens are encrypted (AES-256-GCM); unlinking revokes access at Google.
+- **Feed:** each account's subscription list from the Data API (refreshed every 6 hours); new videos from each channel's public RSS feed (no quota), falling back to the channel's videos tab when RSS fails. Shorts are dropped; durations, views and categories come from one batched Data API call per 50 videos.
+- **Everything else:** video pages, comments, channels and search through YouTube.js, signed out. SponsorBlock, Return YouTube Dislike and DeArrow (queried by hash prefix).
+- **Playback:** [Invidious companion](https://github.com/iv-org/invidious-companion) generates YouTube's anti-bot tokens and streams media; the backend builds a multi-codec DASH manifest (H.264, VP9, AV1) and the player picks what the device decodes in hardware. `COMPANION_SECRET` must be exactly 16 characters.
+- **Privacy:** every thumbnail, avatar and segment goes through signed proxy URLs. The browser never contacts Google.
+- **Age-restricted videos (optional, owner only):** Settings → Age-restricted starts a second, signed-in companion used only for those videos. Use a secondary Google account.
+
+### Google OAuth setup
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable **YouTube Data API v3**.
+2. **Google Auth Platform → Branding:** app name and support email. **Audience:** External, and add every Google account you'll link as a test user. **Data access:** add `youtube.readonly` (and `youtube.force-ssl` for actions).
+3. **Clients → Create client → Web application.** JavaScript origin `http://localhost:5180`; redirect URI `http://localhost:5180/api/b/youtube/public/oauth/callback`.
+4. Put the client ID and secret, and a `YOUTUBE_API_KEY`, in `services/youtube/.env`.
+
+While the Google app is in "Testing", only listed test users can link, and refresh tokens expire after 7 days (the app then shows **Link again**).
+
+## Crunchyroll backend
+
+Optional, and needs a **Crunchyroll Premium** account.
+
+- **Unofficial.** Crunchyroll has no public API. The backend uses the client credentials of Crunchyroll's Android TV app, which you supply in `services/crunchyroll/.env` (`CRUNCHYROLL_BASIC_AUTH`, `CRUNCHYROLL_APP_VERSION`; community-maintained at [crunchy-labs/artifacts](https://github.com/crunchy-labs/artifacts)). Using it is against Crunchyroll's terms and can get an account restricted; use it with your own account at your own risk.
+- **Linking:** the TV activation code. Fanoos shows a code, you enter it at crunchyroll.com/activate, and Fanoos never sees your password.
+- **Not private:** browsing and playback happen as your account, so Crunchyroll sees what you watch there and keeps it in your history (Fanoos also reports your position, so its Continue Watching stays in sync). YouTube stays signed out regardless.
+- **Playback:** Widevine DRM, end to end. The backend asks Crunchyroll for a playback session, proxies the manifest and segments, and forwards the browser's licence requests with your session attached. Decryption happens only in the browser's own CDM; Fanoos never sees or extracts keys. Works in Chrome, Edge and Firefox; Safari needs FairPlay, which isn't offered. Sessions count toward your plan's stream limit, are kept alive while playing, and are released when you leave.
+- **Extras:** styled `.ass` subtitles (rendered with JASSUB), every dub as a seamless audio switch, intro and credits skipping, shows with seasons, and your watchlist as follows in the feed.
+
+## Fanoos core
+
+- **Accounts:** passkeys (WebAuthn) or passwords (scrypt). Sessions use an HttpOnly, SameSite=Lax cookie; every write is checked against the app's Origin.
+- **Caching:** the backends share one Redis (`npm run redis`: memory-only, 256 MB, least-recently-used eviction), each under its own key prefix. Responses are fresh for `CACHE_TTL_SECONDS` (default 600) and served stale while refreshing for up to `CACHE_STALE_SECONDS`. Failures are never cached. Without `REDIS_URL`, a bounded in-memory cache is used.
+
+### Single sign-on (OIDC)
+
+Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (optionally `OIDC_SCOPES`, and `OIDC_NAME` for the button label) in `apps/server/.env`, and register `${PUBLIC_URL}/api/auth/oidc/callback` with your provider (Authentik, Keycloak, Authelia…). When OIDC is on:
+
+- Sign-in shows only "Continue with <name>"; password and passkey sign-in, sign-up and registration are refused, and existing password or passkey sessions are signed out.
+- Accounts are created on first sign-in, with no approval step. A verified email matching an existing account links to it; an unverified match is refused.
+- Authorization code flow with PKCE, `state` bound to the browser, and `nonce`; ID tokens are checked against the provider's JWKS, issuer, audience and expiry.
+
+Signing out ends the Fanoos session only, not the provider's.
 
 ## Not yet
 
-- Writes: subscribing, liking, commenting and editing playlists. These need the `youtube.force-ssl` scope.
-- Linking through other servers (remote backends). Live stream playback. A playlist page. Captions (the companion serves them; the player doesn't show them yet).
+- Remote backends (linking through someone else's backend server).
+- Live stream playback, a playlist page, and captions for YouTube.
+
+## License
+
+[AGPL-3.0-or-later](LICENSE). If you run a modified Fanoos as a service, you must share your changes with its users.

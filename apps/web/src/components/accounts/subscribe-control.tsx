@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, ExternalLink, Server, Zap } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { Button } from "@/components/ui/button";
@@ -21,13 +21,18 @@ import type { Channel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Subscription state for every linked account, and subscribe/unsubscribe for the
- * accounts that allow actions. Read-only accounts show their state only.
+ * Following state for every account linked on this channel's backend, and follow/unfollow
+ * (subscribe, add to watchlist…) for the accounts that allow actions. Read-only accounts
+ * show their state only. Wording comes from the backend.
  */
 export function SubscribeControl({ channel }: { channel: Channel }) {
-  const { accounts, backends } = useAccounts();
+  const { accounts: everyAccount, bySlug } = useAccounts();
+  const backend = bySlug(channel.backend);
+  const accounts = everyAccount.filter((a) => a.backendId === backend?.id);
+  const nouns = backend?.info?.nouns ?? { follow: "Subscribe", following: "Subscribed" };
+  const canFollow = backend?.info?.features.includes("follow") ?? false;
   const source = useSource();
-  const state = useData(() => source.subscribers(channel), [source.key, channel.id]);
+  const state = useData(() => source.followers(channel), [source.key, channel.backend, channel.id]);
   const [following, setFollowing] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -35,26 +40,26 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
     if (state.data) setFollowing(new Set(state.data));
   }, [state.data]);
 
-  if (!accounts.length) return null;
+  if (!accounts.length || !backend) return null;
 
   const followers = accounts.filter((a) => following.has(a.id));
   const subscribed = followers.length > 0;
-  const summary = subscribed ? `Subscribed with ${followers.map((a) => a.label).join(", ")}` : "Not subscribed with any linked account";
+  const summary = subscribed ? `${nouns.following} with ${followers.map((a) => a.label).join(", ")}` : `Not ${nouns.following.toLowerCase()} with any linked account`;
 
   const toggle = async (accountId: string, label: string) => {
     const on = !following.has(accountId);
     setBusy(accountId);
     try {
-      await source.setSubscribed(accountId, channel.id, on);
+      await source.follow(accountId, channel.id, on);
       setFollowing((current) => {
         const next = new Set(current);
         if (on) next.add(accountId);
         else next.delete(accountId);
         return next;
       });
-      toast.success(on ? `Subscribed as ${label}` : `Unsubscribed ${label}`, { description: channel.name });
+      toast.success(on ? `${nouns.following} as ${label}` : `Removed for ${label}`, { description: channel.name });
     } catch (e) {
-      toast.error(on ? "Couldn't subscribe" : "Couldn't unsubscribe", { description: (e as Error).message });
+      toast.error(on ? `Couldn't ${nouns.follow.toLowerCase()}` : "Couldn't undo that", { description: (e as Error).message });
     } finally {
       setBusy(null);
     }
@@ -78,22 +83,18 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
             </span>
           )}
           {busy ? <Spinner /> : null}
-          {subscribed ? "Subscribed" : "Subscribe"}
+          {subscribed ? nouns.following : nouns.follow}
           <ChevronDown className="opacity-60" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuLabel>Subscribe with</DropdownMenuLabel>
-        {backends.map((backend) => {
-          const list = accounts.filter((a) => a.backendId === backend.id);
-          if (!list.length) return null;
+        <DropdownMenuLabel>{nouns.follow} with</DropdownMenuLabel>
+        {(() => {
+          const list = accounts;
           return (
-            <DropdownMenuGroup key={backend.id}>
-              <DropdownMenuLabel className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium">
-                <Server className="size-3" /> {backend.label}
-              </DropdownMenuLabel>
+            <DropdownMenuGroup>
               {list.map((account) =>
-                account.canWrite ? (
+                account.canWrite && canFollow ? (
                   <DropdownMenuCheckboxItem
                     key={account.id}
                     checked={following.has(account.id)}
@@ -115,21 +116,25 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
               )}
             </DropdownMenuGroup>
           );
-        })}
-        {accounts.some((a) => !a.canWrite) && <DropdownMenuSeparator />}
+        })()}
+        {accounts.some((a) => !a.canWrite) && backend.info?.link.writeOption && <DropdownMenuSeparator />}
         {accounts
-          .filter((a) => !a.canWrite && !a.needsRelink)
+          .filter((a) => !a.canWrite && !a.needsRelink && backend.info?.link.writeOption)
           .map((a) => (
-            <DropdownMenuItem key={a.id} onSelect={() => accountActions.link(a.backendId, "settings", { write: true, accountId: a.id })}>
+            <DropdownMenuItem key={a.id} onSelect={() => void accountActions.link(a.backendId, "settings", { write: true, accountId: a.id })}>
               <Zap /> Allow actions for {a.label}
             </DropdownMenuItem>
           ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <a href={`https://www.youtube.com/channel/${channel.id}`} target="_blank" rel="noreferrer noopener">
-            <ExternalLink /> Open on YouTube
-          </a>
-        </DropdownMenuItem>
+        {backend.info?.urls.channel && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href={backend.info.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on {backend.info.name}
+              </a>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

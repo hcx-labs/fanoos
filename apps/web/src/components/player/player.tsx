@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
+import JASSUB from "jassub";
+import jassubWorker from "jassub/dist/jassub-worker.js?url";
+import jassubWasm from "jassub/dist/jassub-worker.wasm?url";
+import jassubFont from "jassub/dist/default.woff2?url";
 import {
+  AudioLines,
   Captions,
   Check,
   ChevronLeft,
@@ -31,9 +36,11 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { formatDuration } from "@/lib/format";
 import { segmentMeta } from "@/lib/segments";
-import { useProfile } from "@/lib/session";
-import { actions, getLocalState, useSettings, type Settings } from "@/lib/store";
-import type { Segment, Stream, Video } from "@/lib/types";
+import { itemKey, paths } from "@/lib/paths";
+import { backendName, useAccounts, useProfile } from "@/lib/session";
+import { useSource } from "@/lib/source";
+import { actions, getLocalState, useSettings, useStore, type Settings } from "@/lib/store";
+import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export type PlayerHandle = { seek: (time: number) => void; play: () => void };
@@ -78,6 +85,55 @@ async function codecPreference(): Promise<RegExp[]> {
 }
 type Notice = { segment: Segment; id: number };
 
+type MenuView = "main" | "speed" | "quality" | "subtitles" | "audio";
+
+const drmMessage = "This browser can't play protected video. Use Chrome, Edge or Firefox with protected content (DRM) allowed in its settings.";
+
+const languageNames = (() => {
+  try {
+    return new Intl.DisplayNames([navigator.language, "en"], { type: "language" });
+  } catch {
+    return null;
+  }
+})();
+
+const regionNames = (() => {
+  try {
+    return new Intl.DisplayNames([navigator.language, "en"], { type: "region" });
+  } catch {
+    return null;
+  }
+})();
+
+/** Variants a service offers side by side, where the region is what tells them apart. */
+const regional: Record<string, string> = { "es-419": "Latin America", "es-ES": "Spain", "pt-BR": "Brazil", "pt-PT": "Portugal", "fr-CA": "Canada", "zh-TW": "Taiwan", "zh-HK": "Hong Kong" };
+
+/** "Japanese", "Spanish (Latin America)"… for a BCP 47 tag: the language, plus the region only where it matters. */
+export const languageLabel = (locale: string) => {
+  const [lang, region] = locale.split("-");
+  const name = languageNames?.of(lang!) ?? locale;
+  const where = regional[locale] ?? (region && locale in regional ? regionNames?.of(region) : undefined);
+  return where ? `${name} (${where})` : name;
+};
+
+/**
+ * The subtitle track to start with: the viewer's saved choice ("" means off), else their
+ * browser language when the audio isn't already in it.
+ */
+function initialSubtitle(tracks: Subtitle[], saved: string | undefined, audio: string | undefined): string {
+  if (saved !== undefined) return tracks.some((t) => t.locale === saved) ? saved : "";
+  const langs = navigator.languages ?? [navigator.language];
+  const base = (l: string) => l.split("-")[0]!.toLowerCase();
+  if (audio && langs.some((l) => base(l) === base(audio))) return "";
+  for (const lang of langs) {
+    const exact = tracks.find((t) => t.locale.toLowerCase() === lang.toLowerCase());
+    if (exact) return exact.locale;
+    const near = tracks.find((t) => base(t.locale) === base(lang));
+    if (near) return near.locale;
+  }
+  return "";
+}
+
 export function Player({ video, stream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
   const owner = useProfile()?.owner ?? false;
@@ -85,12 +141,40 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const media = useRef<HTMLVideoElement>(null);
   const ambient = useRef<HTMLCanvasElement>(null);
   const dash = useRef<MediaPlayerClass | null>(null);
-  // Read once: where playback last stopped (saved to the account).
-  const [resumeAt] = useState(() => startAt ?? getLocalState().progress[video.id] ?? 0);
+  const key = itemKey(video);
+  const navigate = useNavigate();
+  const source = useSource();
+  const { bySlug, can } = useAccounts();
+  const backend = bySlug(video.backend);
+  const service = backendName(backend);
+  const tracksProgress = can(video.backend, "progress");
+  // Protected (DRM) video can't be drawn to a canvas, so there's no ambient glow for it.
+  const protectedStream = Boolean(stream.drm?.widevine || stream.drm?.playready);
+  const ambientOn = settings.ambient && !protectedStream;
+  // Read once: where playback last stopped (saved to the account, or by the service itself).
+  const [resumeAt] = useState(() => startAt ?? getLocalState().progress[key] ?? video.progress ?? 0);
+  // Subtitles (styled .ass, rendered by JASSUB over the video) and other audio languages.
+  const subtitles = stream.subtitles ?? [];
+  const savedLanguages = useStore((s) => s.languages);
+  const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, savedLanguages?.subtitles, video.episode?.audio));
+  const versions = video.episode?.versions ?? [];
+  const chooseSubtitle = useCallback((locale: string) => {
+    setSubtitle(locale);
+    actions.languages({ subtitles: locale });
+  }, []);
+  const switchAudio = useCallback(
+    (id: string, audio: string) => {
+      actions.languages({ audio });
+      // Each dub is its own episode id: carry on from the same moment.
+      navigate(paths.watch({ backend: video.backend, id }, media.current?.currentTime), { replace: true, state: { samePage: true } });
+    },
+    [navigate, video.backend],
+  );
   const [heights, setHeights] = useState<number[]>([]);
   const [playingHeight, setPlayingHeight] = useState<number | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const lastSaved = useRef(0);
+  const lastReported = useRef(0);
 
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
@@ -105,7 +189,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const [fullscreen, setFullscreen] = useState(false);
   const [idle, setIdle] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
-  const [menu, setMenu] = useState<null | "main" | "speed" | "quality">(null);
+  const [menu, setMenu] = useState<null | MenuView>(null);
   const [loop, setLoop] = useState(false);
   const [osd, setOsd] = useState<Osd | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -150,10 +234,24 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     if (media.current) media.current.volume = volume;
   }, [volume]);
 
+  // Protected streams need a CDM; say so up front instead of failing mid-load.
+  useEffect(() => {
+    if (!stream.drm?.widevine || !navigator.requestMediaKeySystemAccess) return;
+    navigator
+      .requestMediaKeySystemAccess("com.widevine.alpha", [{ initDataTypes: ["cenc"], videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }] }])
+      .catch(() => setFailure(drmMessage));
+  }, [stream.drm?.widevine]);
+
+  // Where to pick up when the stream is swapped under a mounted player (another audio language).
+  const handoff = useRef<{ time: number; playing: boolean } | null>(null);
+
   // Attach the stream: DASH through dash.js, or a single progressive file.
   useEffect(() => {
     const el = media.current;
     if (!el) return;
+    const resume = handoff.current;
+    handoff.current = null;
+    setFailure(null);
     if (stream.dash) {
       const player = MediaPlayer().create();
       player.updateSettings({
@@ -161,6 +259,13 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         // also breaks manual 1440p/4K. Auto is capped to the player's size below instead.
         streaming: { buffer: { fastSwitchEnabled: true } },
       });
+      // Encrypted streams: the browser's own CDM asks the licence URL (through Fanoos) for keys.
+      if (stream.drm) {
+        player.setProtectionData({
+          ...(stream.drm.widevine ? { "com.widevine.alpha": { serverURL: new URL(stream.drm.widevine, location.origin).toString() } } : {}),
+          ...(stream.drm.playready ? { "com.microsoft.playready": { serverURL: new URL(stream.drm.playready, location.origin).toString() } } : {}),
+        });
+      }
       const preference = codecPreference();
       player.on("streamInitialized", async () => {
         // One video track per codec: pick the first the device decodes efficiently.
@@ -176,17 +281,23 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       player.on("error", (e: { error?: { code?: number; message?: string } }) => {
         // Keep technical details out of the overlay; they're in the console for debugging.
         console.warn("Playback error", e.error);
+        const code = e.error?.code ?? 0;
+        // dash.js protection errors (100–115): no usable CDM, or the licence was refused.
         setFailure(
-          /not available|404|403|manifest/i.test(e.error?.message ?? "")
-            ? "The stream couldn't be loaded. It may have expired; try again."
-            : "Something went wrong while playing this video.",
+          code >= 100 && code < 120
+            ? drmMessage
+            : /not available|404|403|manifest/i.test(e.error?.message ?? "")
+              ? "The stream couldn't be loaded. It may have expired; try again."
+              : "Something went wrong while playing this video.",
         );
       });
-      player.initialize(el, stream.dash, false, resumeAt || undefined);
+      player.initialize(el, stream.dash, resume?.playing ?? false, (resume ? resume.time : resumeAt) || undefined);
       dash.current = player;
       // Development aid: inspect playback from the browser console.
       if (import.meta.env.DEV) Object.assign(window, { __dash: player });
       return () => {
+        // If another stream replaces this one, carry on from here.
+        handoff.current = { time: el.currentTime, playing: !el.paused };
         dash.current = null;
         player.destroy();
       };
@@ -197,6 +308,45 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.dash, stream.progressive]);
+
+  // Styled subtitles: JASSUB draws them on a canvas laid over the video.
+  const track = subtitles.find((t) => t.locale === subtitle);
+  useEffect(() => {
+    const el = media.current;
+    if (!el || !track) return;
+    let renderer: JASSUB | null = null;
+    try {
+      renderer = new JASSUB({
+        video: el,
+        subUrl: track.url,
+        workerUrl: jassubWorker,
+        wasmUrl: jassubWasm,
+        availableFonts: { "liberation sans": jassubFont },
+        fallbackFont: "liberation sans",
+      });
+    } catch (error) {
+      console.warn("Subtitles failed to start", error);
+    }
+    return () => renderer?.destroy();
+  }, [track]);
+
+  // A service's playback session (stream limits): keep it alive while the page is open, end it on leave.
+  useEffect(() => {
+    const session = stream.session;
+    if (!session || !started) return;
+    const ping = () =>
+      void fetch(`${session.keepAlive}?position=${Math.floor(media.current?.currentTime ?? 0)}`, { method: "POST", credentials: "same-origin", keepalive: true }).catch(() => {});
+    const timer = session.keepAlive ? window.setInterval(ping, (session.everySeconds ?? 240) * 1000) : undefined;
+    const release = () => {
+      if (session.release) void fetch(session.release, { method: "POST", credentials: "same-origin", keepalive: true }).catch(() => {});
+    };
+    addEventListener("pagehide", release);
+    return () => {
+      window.clearInterval(timer);
+      removeEventListener("pagehide", release);
+      release();
+    };
+  }, [stream.session, started]);
 
   // The player's height in device pixels, so Auto never fetches more than it can show.
   const [portal, setPortal] = useState(0);
@@ -263,7 +413,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
 
   // Ambient glow: paint a tiny copy of the frame behind the player and let CSS blur it.
   useEffect(() => {
-    if (!settings.ambient) return;
+    if (!ambientOn) return;
     const canvas = ambient.current;
     const el = media.current;
     const context = canvas?.getContext("2d");
@@ -276,7 +426,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     paint();
     const timer = window.setInterval(paint, 250);
     return () => window.clearInterval(timer);
-  }, [settings.ambient, started]);
+  }, [ambientOn, started]);
 
   // Autoplay countdown at the end.
   useEffect(() => {
@@ -362,6 +512,16 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         case "i":
           togglePip();
           break;
+        case "c":
+          if (!subtitles.length) return;
+          // On: the last language chosen, else the browser's, else the first track.
+          chooseSubtitle(
+            subtitle
+              ? ""
+              : subtitles.find((t) => t.locale === savedLanguages?.subtitles)?.locale || initialSubtitle(subtitles, undefined, undefined) || subtitles[0]!.locale,
+          );
+          flash(Captions, subtitle ? "Off" : "On");
+          break;
         case ">":
         case "<": {
           const index = speeds.indexOf(settings.speed);
@@ -387,7 +547,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volume, muted, theater, settings.speed, toggle, seek, flash, toggleFullscreen, togglePip, setSpeed, onTheaterChange]);
+  }, [volume, muted, theater, settings.speed, toggle, seek, flash, toggleFullscreen, togglePip, setSpeed, onTheaterChange, subtitle, subtitles, chooseSubtitle]);
 
   const wake = () => {
     setIdle(false);
@@ -401,7 +561,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   return (
     <div className="relative">
       {/* Extends only vertically: a box wider than the player would widen the page. The blur still spreads sideways. */}
-      {settings.ambient && (
+      {ambientOn && (
         <canvas
           ref={ambient}
           width={32}
@@ -440,19 +600,21 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
             setStarted(true);
             setEnded(false);
             wake();
-            actions.watched(video.id);
+            actions.watched(key);
           }}
           onPause={(e) => {
             setPlaying(false);
-            actions.saveProgress(video.id, e.currentTarget.currentTime, e.currentTarget.duration);
+            actions.saveProgress(key, e.currentTarget.currentTime, e.currentTarget.duration);
+            if (tracksProgress) void source.progress(video, e.currentTarget.currentTime);
           }}
           onWaiting={() => setWaiting(true)}
           onPlaying={() => setWaiting(false)}
           onCanPlay={() => setWaiting(false)}
-          onEnded={() => {
+          onEnded={(e) => {
             setEnded(true);
             setPlaying(false);
-            actions.saveProgress(video.id, 0, 0);
+            actions.saveProgress(key, 0, 0);
+            if (tracksProgress) void source.progress(video, e.currentTarget.duration);
           }}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onTimeUpdate={(e) => {
@@ -462,7 +624,12 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
             // Save the position every few seconds for resuming and "Continue watching".
             if (Math.abs(t - lastSaved.current) > 5) {
               lastSaved.current = t;
-              actions.saveProgress(video.id, t, e.currentTarget.duration);
+              actions.saveProgress(key, t, e.currentTarget.duration);
+            }
+            // Services that keep their own history hear about it every 30 s.
+            if (tracksProgress && Math.abs(t - lastReported.current) > 30) {
+              lastReported.current = t;
+              void source.progress(video, t);
             }
           }}
           onProgress={(e) => {
@@ -482,7 +649,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                 {failure
                   ? "This video couldn't be played"
                   : {
-                      age_restricted: "Age-restricted on YouTube",
+                      age_restricted: `Age-restricted on ${service}`,
                       live: "Live streams aren't supported yet",
                       unplayable: "This video can't be played here",
                     }[stream.unavailable?.code ?? "unplayable"]}
@@ -490,8 +657,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
               <p className="text-sm text-white/70">
                 {failure ??
                   (stream.unavailable?.code === "age_restricted"
-                    ? "YouTube only streams this video to signed-in, age-verified accounts, so it has to be watched on YouTube."
-                    : (stream.unavailable?.reason ?? "YouTube didn't offer a stream for this video."))}
+                    ? `${service} only streams this video to signed-in, age-verified accounts, so it has to be watched on ${service}.`
+                    : (stream.unavailable?.reason ?? `${service} didn't offer a stream for this video.`))}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 {!failure && stream.unavailable?.code === "age_restricted" && owner && (
@@ -504,14 +671,16 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     Try again
                   </button>
                 )}
-                <a
-                  className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25"
-                  href={`https://www.youtube.com/watch?v=${video.id}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
-                  Open on YouTube
-                </a>
+                {backend?.info?.urls.video && (
+                  <a
+                    className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25"
+                    href={backend.info.urls.video.replace("{id}", encodeURIComponent(video.id))}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Open on {service}
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -594,7 +763,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           <div className="absolute inset-0 grid place-items-center bg-black/70 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-5 px-6 text-center">
               {next && (
-                <Link to={`/watch/${next.id}`} className="group/next flex w-72 flex-col gap-3 text-left">
+                <Link to={paths.watch(next)} className="group/next flex w-72 flex-col gap-3 text-left">
                   <span className="text-xs font-medium tracking-wide text-white/60 uppercase">
                     {countdown !== null ? `Up next in ${countdown}` : "Up next"}
                   </span>
@@ -633,7 +802,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
               {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
             </Control>
             {next && (
-              <Control label="Next" asLink={`/watch/${next.id}`}>
+              <Control label="Next" asLink={paths.watch(next)}>
                 <SkipForward className="fill-current" />
               </Control>
             )}
@@ -680,15 +849,31 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                   {settings.speed}×
                 </button>
               )}
-              <Control label="Captions unavailable" disabled>
-                <Captions />
-              </Control>
+              {subtitles.length > 0 ? (
+                <Control
+                  label={subtitle ? `Subtitles: ${subtitles.find((t) => t.locale === subtitle)?.label ?? subtitle} (c)` : "Subtitles off (c)"}
+                  onClick={() => setMenu((m) => (m === "subtitles" ? null : "subtitles"))}
+                  pressed={Boolean(subtitle)}
+                >
+                  <Captions />
+                </Control>
+              ) : (
+                <Control label="Captions unavailable" disabled>
+                  <Captions />
+                </Control>
+              )}
               <div className="relative">
                 <Control label="Settings" onClick={() => setMenu((m) => (m ? null : "main"))} pressed={menu !== null}>
                   <Settings2 className={cn("transition-transform duration-300", menu && "rotate-45")} />
                 </Control>
                 {menu && (
                   <SettingsPanel
+                    subtitles={subtitles}
+                    subtitle={subtitle}
+                    onSubtitle={chooseSubtitle}
+                    versions={versions}
+                    audio={video.episode?.audio}
+                    onAudio={switchAudio}
                     heights={heights}
                     playingHeight={playingHeight}
                     view={menu}
@@ -763,6 +948,12 @@ function Control({
 }
 
 function SettingsPanel({
+  subtitles,
+  subtitle,
+  onSubtitle,
+  versions,
+  audio,
+  onAudio,
   heights,
   playingHeight,
   view,
@@ -772,10 +963,16 @@ function SettingsPanel({
   onLoop,
   onSpeed,
 }: {
+  subtitles: Subtitle[];
+  subtitle: string;
+  onSubtitle: (locale: string) => void;
+  versions: { audio: string; id: string; original?: boolean }[];
+  audio?: string;
+  onAudio: (id: string, audio: string) => void;
   heights: number[];
   playingHeight: number | null;
-  view: "main" | "speed" | "quality";
-  onView: (view: null | "main" | "speed" | "quality") => void;
+  view: MenuView;
+  onView: (view: null | MenuView) => void;
   settings: Settings;
   loop: boolean;
   onLoop: (loop: boolean) => void;
@@ -791,6 +988,20 @@ function SettingsPanel({
     >
       {view === "main" && (
         <>
+          {versions.length > 1 && (
+            <button type="button" className={row} onClick={() => onView("audio")}>
+              <AudioLines className="size-4 text-white/70" /> Audio
+              <span className="ml-auto truncate text-white/60">{audio ? languageLabel(audio) : "Original"}</span>
+              <ChevronRight className="size-4 text-white/40" />
+            </button>
+          )}
+          {subtitles.length > 0 && (
+            <button type="button" className={row} onClick={() => onView("subtitles")}>
+              <Captions className="size-4 text-white/70" /> Subtitles
+              <span className="ml-auto truncate text-white/60">{subtitle ? (subtitles.find((t) => t.locale === subtitle)?.label ?? subtitle) : "Off"}</span>
+              <ChevronRight className="size-4 text-white/40" />
+            </button>
+          )}
           <button type="button" className={row} onClick={() => onView("speed")}>
             <Gauge className="size-4 text-white/70" /> Playback speed
             <span className="ml-auto text-white/60 tabular-nums">{settings.speed === 1 ? "Normal" : `${settings.speed}×`}</span>
@@ -863,6 +1074,37 @@ function SettingsPanel({
               </button>
             ))}
           </div>
+        </>
+      )}
+      {view === "subtitles" && (
+        <>
+          <button type="button" className={cn(row, "font-semibold")} onClick={() => onView("main")}>
+            <ChevronLeft className="size-4" /> Subtitles
+          </button>
+          <div className="my-1 h-px bg-white/10" />
+          {[{ locale: "", label: "Off" }, ...subtitles].map((t) => (
+            <button key={t.locale || "off"} type="button" className={row} onClick={() => onSubtitle(t.locale)}>
+              <Check className={cn("size-4", subtitle === t.locale ? "text-brand" : "opacity-0")} />
+              {t.label}
+            </button>
+          ))}
+        </>
+      )}
+      {view === "audio" && (
+        <>
+          <button type="button" className={cn(row, "font-semibold")} onClick={() => onView("main")}>
+            <ChevronLeft className="size-4" /> Audio
+          </button>
+          <div className="my-1 h-px bg-white/10" />
+          {[...versions]
+            .sort((a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)) || languageLabel(a.audio).localeCompare(languageLabel(b.audio)))
+            .map((v) => (
+              <button key={v.id} type="button" className={row} onClick={() => v.audio !== audio && onAudio(v.id, v.audio)}>
+                <Check className={cn("size-4", v.audio === audio ? "text-brand" : "opacity-0")} />
+                {languageLabel(v.audio)}
+                {v.original && <span className="ml-auto text-[10px] font-bold text-white/50 uppercase">Original</span>}
+              </button>
+            ))}
         </>
       )}
       {view === "quality" && (
