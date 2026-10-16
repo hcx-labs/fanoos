@@ -5,7 +5,9 @@
 import { useMemo } from "react";
 import { api, qs } from "./api";
 import { useAccounts } from "./session";
-import type { Channel, CommentPage, CommentSort, Playlist, SearchFilters, SearchResults, Video, VideoDetail } from "./types";
+import type { Channel, Comment, CommentPage, CommentSort, Playlist, SearchFilters, SearchResults, Video, VideoDetail } from "./types";
+
+export type Rating = "like" | "dislike" | "none";
 
 export type { CommentSort, SearchFilters };
 
@@ -32,6 +34,15 @@ const source = {
   replies: (token: string) => api<CommentPage>(`/comments/replies${qs({ token })}`),
   channel: (id: string) => api<{ channel: Channel; videos: Video[] }>(`/channels/${id}`),
   search: (query: string, filters: SearchFilters) => api<SearchResults>(`/search${qs({ q: query, ...filters })}`),
+  // Actions as a linked account (needs write permission).
+  setSubscribed: (accountId: string, channelId: string, subscribed: boolean) =>
+    api("/actions/subscriptions", { body: { accountId, channelId, subscribed } }),
+  rating: (accountId: string, videoId: string) => api<{ rating: Rating }>(`/actions/rating${qs({ accountId, videoId })}`),
+  rate: (accountId: string, videoId: string, rating: Rating) => api("/actions/rating", { body: { accountId, videoId, rating } }),
+  comment: (accountId: string, videoId: string, text: string, parentId?: string) =>
+    api<Comment>("/actions/comments", { body: { accountId, videoId, text, parentId } }),
+  /** Channel id for a YouTube handle or custom-URL link. */
+  resolve: (url: string) => api<{ channelId: string }>(`/resolve${qs({ url })}`),
   videos: (ids: string[]) => (ids.length ? api<Video[]>(`/videos${qs({ ids: ids.join(",") })}`) : Promise.resolve([])),
 };
 

@@ -7,9 +7,11 @@ import { type AppEnv, sameOrigin } from "./http.ts";
 import { mediaRoutes } from "./media.ts";
 import { resumeSignedIn } from "./youtube/signed-in.ts";
 import { accountRoutes } from "./routes/accounts.ts";
+import { actionRoutes } from "./routes/actions.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { dataRoutes } from "./routes/data.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { oidcRoutes } from "./routes/oidc.ts";
 import { contentRoutes } from "./routes/content.ts";
 
 const app = new Hono<AppEnv>().basePath("/api");
@@ -22,10 +24,12 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/auth/oidc", oidcRoutes);
 app.route("/auth", authRoutes);
 app.route("/", mediaRoutes);
 app.route("/admin", adminRoutes);
 app.route("/me/data", dataRoutes);
+app.route("/actions", actionRoutes);
 app.route("/", accountRoutes);
 app.route("/", contentRoutes);
 
@@ -43,4 +47,5 @@ resumeSignedIn();
 serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, ({ port }) => {
   console.log(`API on http://127.0.0.1:${port}/api  (app origin ${config.publicUrl.origin})`);
   if (!config.google.configured) console.log("Google OAuth not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to link accounts.");
+  if (config.oidc.enabled) console.log(`Sign-in: OIDC only (${config.oidc.name}, ${config.oidc.issuer}); password and passkey sign-in are disabled.`);
 });

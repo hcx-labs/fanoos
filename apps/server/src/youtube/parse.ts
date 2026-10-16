@@ -17,6 +17,9 @@ export function count(value: unknown): number {
   return Math.round(Number(m[1]) * mult);
 }
 
+/** Whether YouTube's text is a rounded figure ("1.2M views", "13K"). */
+export const isRounded = (value: unknown) => /\d\s*[KMB]\b/i.test(text(value));
+
 /** "1:02:03" → 3723. */
 export function clock(value: unknown): number {
   const parts = text(value).trim().split(":").map(Number);

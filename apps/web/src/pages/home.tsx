@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { LayoutGrid, Link2, List, Settings2, Sparkles } from "lucide-react";
+import { LayoutGrid, Link2, List, Settings2, Sparkles, X } from "lucide-react";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { Hero, pickHeroVideos } from "@/components/hero";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useData, type DataState } from "@/hooks/use-data";
 import { formatDuration } from "@/lib/format";
 import { paths } from "@/lib/paths";
@@ -20,6 +21,7 @@ import { useAccounts, useProfile } from "@/lib/session";
 import { actions, useProgress, useSettings, useStore } from "@/lib/store";
 import type { Channel, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useTitle } from "@/hooks/use-title";
 
 const DAY = 864e5;
 
@@ -37,6 +39,7 @@ function bucket(iso: string) {
 }
 
 export function HomePage() {
+  useTitle("Home");
   const [group, setGroup] = useState("all");
   const [focus, setFocus] = useState<string | null>(null);
   const settings = useSettings();
@@ -58,6 +61,14 @@ export function HomePage() {
   const resumeIds = useMemo(() => Object.keys(progress).reverse().slice(0, 12), [progress]);
   const resume = useData(() => source.videos(resumeIds), [resumeIds.join(",")]);
 
+  // Categories present in the feed, most common first (YouTube's own video categories).
+  const [category, setCategory] = useState("all");
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const v of feed.data ?? []) if (v.category) counts.set(v.category, (counts.get(v.category) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1]);
+  }, [feed.data]);
+
   const videos = useMemo(() => {
     if (feed.status !== "ready") return [];
     return feed.data.filter(
@@ -65,11 +76,16 @@ export function HomePage() {
         !muted.includes(v.channelId) &&
         (!focus || v.channelId === focus) &&
         // "Watched" = played before and not left part-way.
-        !(settings.hideWatched && watchedIds.some((h) => h.id === v.id) && !progress[v.id]),
+        !(settings.hideWatched && watchedIds.some((h) => h.id === v.id) && !progress[v.id]) &&
+        (category === "all" || v.category === category),
     );
-  }, [feed, muted, focus, settings.hideWatched, watchedIds, progress]);
+  }, [feed, muted, focus, settings.hideWatched, watchedIds, progress, category]);
 
-  const inProgress = resume.data ?? [];
+  // Keep the last loaded list while a refetch runs, filtered to what's still in progress,
+  // so removing an item updates instantly instead of the row flickering away.
+  const lastResume = useRef<Video[]>([]);
+  if (resume.data) lastResume.current = resume.data;
+  const inProgress = lastResume.current.filter((v) => progress[v.id]);
   // The hero spotlights the newest upload from up to five channels; the grid shows the rest.
   const heroVideos = useMemo(() => pickHeroVideos(videos), [videos]);
   const rest = useMemo(() => videos.filter((v) => !heroVideos.includes(v)), [videos, heroVideos]);
@@ -97,7 +113,6 @@ export function HomePage() {
               ) : subs.status === "ready" ? (
                 <>
                   <span className="text-foreground font-medium">{unseen} new videos</span> from {unseenChannels} channels across {inFeed.length} {inFeed.length === 1 ? "account" : "accounts"}.
-                  Newest first — no recommendations, no algorithm.
                 </>
               ) : (
                 <Skeleton className="inline-block h-4 w-72 align-middle" />
@@ -151,8 +166,73 @@ export function HomePage() {
           </div>
         )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          {groups.length > 0 && (
+        {/* One line: category chips scroll sideways; view controls stay pinned on the right. */}
+        <div className="mt-6 flex items-center gap-4">
+          {categoryCounts.length > 1 ? (
+            <div
+              className="no-scrollbar flex min-w-0 flex-1 gap-2 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] pr-10"
+              role="group"
+              aria-label="Filter by category"
+            >
+            {[["all", feed.data?.length ?? 0] as [string, number], ...categoryCounts].map(([name, count]) => {
+              const selected = category === name;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setCategory(selected && name !== "all" ? "all" : name)}
+                  className={cn(
+                    "bg-secondary text-secondary-foreground hover:bg-accent flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-colors",
+                    selected && "bg-foreground text-background hover:bg-foreground",
+                  )}
+                >
+                  {name === "all" ? "All videos" : name}
+                  <span className={cn("text-[11px] tabular-nums", selected ? "text-background/70" : "text-muted-foreground")}>{count}</span>
+                </button>
+              );
+            })}
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
+          <div className="flex shrink-0 items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch id="hide-watched" checked={settings.hideWatched} onCheckedChange={(on) => actions.setting("hideWatched", on)} />
+              <Label htmlFor="hide-watched" className="text-muted-foreground text-[13px]">
+                <span className="sr-only sm:not-sr-only">Hide watched</span>
+              </Label>
+            </div>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={settings.feedLayout}
+              onValueChange={(value) => value && actions.setting("feedLayout", value as "grid" | "list")}
+              aria-label="Layout"
+              className="hidden sm:flex"
+            >
+              {(
+                [
+                  ["grid", "Grid view", LayoutGrid],
+                  ["list", "List view: bigger thumbnails with descriptions", List],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <Tooltip key={value}>
+                  <TooltipTrigger asChild>
+                    <ToggleGroupItem value={value} aria-label={label} className="data-[state=on]:bg-foreground data-[state=on]:text-background">
+                      <Icon />
+                    </ToggleGroupItem>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              ))}
+            </ToggleGroup>
+          </div>
+        </div>
+
+        {groups.length > 0 && (
+          <div className="mt-3">
           <ToggleGroup
             type="single"
             value={group}
@@ -171,31 +251,8 @@ export function HomePage() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          )}
-          <div className="ml-auto flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch id="hide-watched" checked={settings.hideWatched} onCheckedChange={(on) => actions.setting("hideWatched", on)} />
-              <Label htmlFor="hide-watched" className="text-muted-foreground text-[13px]">
-                Hide watched
-              </Label>
-            </div>
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              size="sm"
-              value={settings.feedLayout}
-              onValueChange={(value) => value && actions.setting("feedLayout", value as "grid" | "list")}
-              aria-label="Layout"
-            >
-              <ToggleGroupItem value="grid" aria-label="Grid">
-                <LayoutGrid />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="list" aria-label="List">
-                <List />
-              </ToggleGroupItem>
-            </ToggleGroup>
           </div>
-        </div>
+        )}
 
         {feed.status === "loading" && <FeedSkeleton />}
 
@@ -217,9 +274,14 @@ export function HomePage() {
 
             {inProgress.length > 0 && !focus && (
               <section className="mt-12" aria-labelledby="continue">
-                <h2 id="continue" className="font-display mb-4 text-xl font-semibold">
-                  Continue watching
-                </h2>
+                <div className="mb-4 flex items-baseline justify-between gap-4">
+                  <h2 id="continue" className="font-display text-xl font-semibold">
+                    Continue watching
+                  </h2>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => actions.forgetProgress()}>
+                    Clear all
+                  </Button>
+                </div>
                 <Carousel opts={{ align: "start", dragFree: true }} className="group/carousel">
                   <CarouselContent className="-ml-4">
                     {inProgress.map((video) => (
@@ -336,11 +398,22 @@ function ContinueCard({ video }: { video: Video }) {
   const title = useVideoTitle(video);
   const left = video.duration - (useProgress(video.id) ?? 0);
   return (
-    <Link to={paths.watch(video)} className="group/card block">
-      <Thumbnail video={video} size="sm" />
-      <p className="mt-2 line-clamp-1 text-sm font-semibold">{title}</p>
-      <p className="text-muted-foreground text-xs">{formatDuration(left)} left</p>
-    </Link>
+    <div className="group/card relative">
+      <Link to={paths.watch(video)} className="block">
+        <Thumbnail video={video} size="sm" />
+        <p className="mt-2 line-clamp-1 text-sm font-semibold">{title}</p>
+        <p className="text-muted-foreground text-xs">{formatDuration(left)} left</p>
+      </Link>
+      <button
+        type="button"
+        aria-label={`Remove “${title}” from Continue watching`}
+        title="Remove from Continue watching"
+        onClick={() => actions.forgetProgress(video.id)}
+        className="absolute top-2 right-2 grid size-7 place-items-center rounded-full bg-black/70 text-white opacity-0 backdrop-blur transition-opacity group-hover/card:opacity-100 hover:bg-black/90 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, CircleCheck, Clock3, Play } from "lucide-rea
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { useVideoTitle } from "@/components/video-card";
 import { Button } from "@/components/ui/button";
-import { formatAgo, formatCount, formatDuration } from "@/lib/format";
+import { formatAgo, formatDuration, formatViews } from "@/lib/format";
 import { paths } from "@/lib/paths";
 import { actions, useStore } from "@/lib/store";
 import type { Video } from "@/lib/types";
@@ -108,7 +108,7 @@ export function Hero({ videos }: { videos: Video[] }) {
             <HeroTitle video={video} />
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
               {video.duration > 0 && <span className="rounded-md bg-white/15 px-2 py-1 tabular-nums backdrop-blur">{formatDuration(video.duration)}</span>}
-              {video.views > 0 && <span className="rounded-md bg-white/15 px-2 py-1 backdrop-blur">{formatCount(video.views)} views</span>}
+              {video.views > 0 && <span className="rounded-md bg-white/15 px-2 py-1 backdrop-blur">{formatViews(video)}</span>}
               {video.live && <span className="rounded-md bg-red-600 px-2 py-1 uppercase">Live</span>}
             </div>
             {teaser(video.description) && <p className="mt-3 line-clamp-2 max-w-xl text-sm text-white/80">{teaser(video.description)}</p>}

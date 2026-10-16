@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router";
-import { ArrowRight, Ban, Fingerprint, Layers, ListChecks, ShieldCheck, ThumbsDown } from "lucide-react";
+import { ArrowRight, Ban, Fingerprint, Layers, ListChecks, LogIn, ShieldCheck, ThumbsDown } from "lucide-react";
 import { ConnectAccount } from "@/components/accounts/connect-account";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { useTitle } from "@/hooks/use-title";
 import { brand } from "@/lib/brand";
-import { authActions, useAccounts, useProfile, useSession } from "@/lib/session";
+import { authActions, getAuthConfig, useAccounts, useProfile, useSession, type AuthConfig } from "@/lib/session";
 
 const features = [
   { icon: ListChecks, title: "Only your subscriptions", text: "A chronological feed of channels you chose. No recommendations, no Shorts wall." },
@@ -25,6 +26,11 @@ export function WelcomePage() {
   const session = useSession();
   const profile = useProfile();
   const { accounts } = useAccounts();
+  useTitle(profile ? "Link a YouTube account" : "Sign in");
+  const [auth, setAuth] = useState<AuthConfig | null>(null);
+  useEffect(() => {
+    void getAuthConfig().then(setAuth);
+  }, []);
   if (session.status === "loading") return null;
   // Signed in with accounts already linked: nothing to do here.
   if (profile && accounts.length) return <Navigate to="/" replace />;
@@ -88,12 +94,60 @@ export function WelcomePage() {
                 </Button>
               </CardContent>
             </>
+          ) : auth === null ? (
+            <div className="grid place-items-center p-10">
+              <Spinner className="text-muted-foreground" />
+            </div>
+          ) : auth.oidc ? (
+            <SsoSignIn name={auth.oidc.name} />
           ) : (
             <SignIn />
           )}
         </Card>
       </div>
     </div>
+  );
+}
+
+const SSO_ERRORS: Record<string, string> = {
+  expired: "That sign-in took too long or was started in another browser. Try again.",
+  denied: "Sign-in was cancelled at the provider.",
+  provider: "The sign-in provider didn't complete the sign-in. Try again, or ask your administrator.",
+  email_taken: "An account with your email already exists, but your provider hasn't verified that email, so it can't be linked.",
+};
+
+/** Step 1 with single sign-on: the only way in. */
+function SsoSignIn({ name }: { name: string }) {
+  const error = new URLSearchParams(location.search).get("sso_error");
+  const [leaving, setLeaving] = useState(false);
+  return (
+    <>
+      <CardHeader>
+        <p className="text-brand-strong text-xs font-semibold">Step 1 of 2</p>
+        <CardTitle className="font-display text-2xl">Sign in to {brand.name}</CardTitle>
+        <CardDescription>
+          This server uses {name} for sign-in. Your {brand.name} account is created automatically the first time.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Button
+          size="lg"
+          className="h-11 w-full rounded-xl text-base"
+          disabled={leaving}
+          onClick={() => {
+            setLeaving(true);
+            window.location.assign("/api/auth/oidc/start");
+          }}
+        >
+          {leaving ? <Spinner /> : <LogIn />} Continue with {name}
+        </Button>
+        {error && (
+          <p role="alert" className="text-destructive text-sm">
+            {SSO_ERRORS[error] ?? SSO_ERRORS.provider}
+          </p>
+        )}
+      </CardContent>
+    </>
   );
 }
 

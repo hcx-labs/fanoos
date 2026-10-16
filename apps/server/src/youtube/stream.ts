@@ -10,7 +10,7 @@
  * manifests and rewrites every segment URL to the signed /api/media proxy, so
  * browsers only ever talk to this server.
  */
-import { TtlCache } from "../cache.ts";
+import { SharedCache } from "../cache.ts";
 import { config } from "../config.ts";
 import { type CompanionInstance, proxyCompanion } from "../media.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
@@ -38,7 +38,7 @@ async function playerStatus(instance: CompanionInstance, id: string): Promise<St
 
 const isAgeGate = (s: Status) => s.status === "LOGIN_REQUIRED" && /age|inappropriate/i.test(s.reason ?? "");
 
-const playabilityCache = new TtlCache<Playability>(30 * 60_000, 1000);
+const playabilityCache = new SharedCache<Playability>("playability", { staleSeconds: 3600 });
 
 /** Whether the video can be streamed (and by which instance), or why not. */
 export function playability(id: string): Promise<Playability> {
@@ -51,11 +51,11 @@ export function playability(id: string): Promise<Playability> {
       const signed = signedInReady() ? await playerStatus("s", id) : null;
       if (signed?.status === "OK") return { ok: true, instance: "s" };
       // Not cached: once age-restricted playback is set up, the next attempt should use it.
-      queueMicrotask(() => playabilityCache.delete(id));
+      queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "age_restricted", reason: anon.reason ?? "Age-restricted." };
     }
     // Reported while the companion generates its first token; don't cache that.
-    if (/token|not ready/i.test(anon.reason ?? "")) queueMicrotask(() => playabilityCache.delete(id));
+    if (/token|not ready/i.test(anon.reason ?? "")) queueMicrotask(() => void playabilityCache.delete(id));
     return { ok: false, code: "unplayable", reason: anon.reason ?? "This video can't be played." };
   });
 }
@@ -78,8 +78,9 @@ type Format = {
 };
 
 type PlayerResponse = { streamingData?: { adaptiveFormats?: Format[] } };
-const playerCache = new TtlCache<PlayerResponse>(60 * 60_000, 300);
-const manifests = new TtlCache<string>(60 * 60_000, 300);
+// Stream URLs expire after ~6 hours, so stale copies are only served for an hour.
+const playerCache = new SharedCache<PlayerResponse>("player", { staleSeconds: 3600 });
+const manifests = new SharedCache<string>("manifest", { staleSeconds: 3600 });
 
 /** The companion's player response: deciphered stream URLs carrying the PO token. */
 function playerResponse(instance: CompanionInstance, id: string) {

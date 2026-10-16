@@ -7,11 +7,12 @@
  */
 import { XMLParser } from "fast-xml-parser";
 import type { Channel, Video } from "@tube/shared";
-import { mapLimit, TtlCache } from "../cache.ts";
+import { mapLimit, SharedCache } from "../cache.ts";
 import { db } from "../db.ts";
 import { fetchSubscriptions, fetchVideoStats, RelinkRequired, type VideoStats } from "../google.ts";
 import { proxyImage } from "../media.ts";
 import { communityTitle } from "./extras.ts";
+import { channelPage } from "./innertube.ts";
 import { thumb } from "./parse.ts";
 
 const SYNC_EVERY = 6 * 36e5;
@@ -87,39 +88,66 @@ function mergedChannels(userId: string, accounts: FeedAccount[]): Channel[] {
 // RSS: the last 15 uploads per channel, public and quota-free.
 type RssEntry = { id: string; title: string; published: string; description: string; views: number; short: boolean };
 const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@" });
-const rssCache = new TtlCache<RssEntry[]>(15 * 60_000, 5000);
+const rssCache = new SharedCache<RssEntry[]>("rss");
 
-const rss = (channelId: string) =>
-  rssCache.get(channelId, async () => {
-    const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    const doc = xml.parse(await res.text());
-    const entries = [doc.feed?.entry ?? []].flat();
-    return entries.map((e: Record<string, any>) => ({
-      id: String(e["yt:videoId"]),
-      title: String(e.title ?? ""),
-      published: String(e.published),
-      description: String(e["media:group"]?.["media:description"] ?? ""),
-      views: Number(e["media:group"]?.["media:community"]?.["media:statistics"]?.["@views"] ?? 0),
-      short: String(e.link?.["@href"] ?? "").includes("/shorts/"),
-    }));
-  });
+/** The channel's public RSS feed, or null when YouTube doesn't serve it (it often 404s or 500s). */
+async function fromRss(channelId: string): Promise<RssEntry[] | null> {
+  const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`, {
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const doc = xml.parse(await res.text());
+  const entries = [doc.feed?.entry ?? []].flat();
+  return entries.map((e: Record<string, any>) => ({
+    id: String(e["yt:videoId"]),
+    title: String(e.title ?? ""),
+    published: String(e.published),
+    description: String(e["media:group"]?.["media:description"] ?? ""),
+    views: Number(e["media:group"]?.["media:community"]?.["media:statistics"]?.["@views"] ?? 0),
+    short: String(e.link?.["@href"] ?? "").includes("/shorts/"),
+  }));
+}
 
-// Video stats rarely change shape; live state does, so keep them for 30 minutes.
-const statsCache = new Map<string, { stats: VideoStats; at: number }>();
+/** Fallback: the channel's videos tab through YouTube.js (dates are approximate, Shorts aren't listed there). */
+async function fromChannelTab(channelId: string): Promise<RssEntry[]> {
+  const { videos } = await channelPage(channelId);
+  return videos.slice(0, 15).map((v) => ({
+    id: v.id,
+    title: v.title,
+    published: v.published,
+    description: v.description,
+    views: v.views,
+    short: false,
+  }));
+}
+
+/**
+ * Latest uploads for a channel: RSS first, the videos tab if RSS fails. Only
+ * successful results are cached; if both fail this throws, so the next load retries.
+ */
+const rss = (channelId: string) => rssCache.get(channelId, async () => (await fromRss(channelId)) ?? fromChannelTab(channelId));
+
+// Durations, views, live state and categories, fetched in batches of 50 for whatever isn't cached.
+const statsCache = new SharedCache<VideoStats>("stats");
 
 async function enrich(accountId: string, ids: string[]) {
-  const missing = ids.filter((id) => (statsCache.get(id)?.at ?? 0) < Date.now() - 30 * 60_000);
+  const { values: known, stale } = await statsCache.getMany(ids);
+  const fetchAndStore = async (list: string[]) => {
+    const fetched = await fetchVideoStats(accountId, list);
+    await statsCache.setMany([...fetched]);
+    return fetched;
+  };
+  const missing = ids.filter((id) => !known.has(id));
   if (missing.length) {
     try {
-      for (const [id, stats] of await fetchVideoStats(accountId, missing)) statsCache.set(id, { stats, at: Date.now() });
+      for (const [id, stats] of await fetchAndStore(missing)) known.set(id, stats);
     } catch (error) {
-      console.warn("video stats failed:", (error as Error).message);
+      console.warn("video stats failed:", (error as Error).constructor.name, (error as Error).message);
     }
   }
-  return (id: string) => statsCache.get(id)?.stats;
+  // Stale stats are good enough to show now; refresh them without waiting.
+  if (stale.length) fetchAndStore(stale).catch((error: Error) => console.warn("video stats refresh failed:", error.message));
+  return (id: string) => known.get(id);
 }
 
 /** Wait for community titles, but never longer than the budget. */
@@ -180,6 +208,7 @@ export async function feed(userId: string, opts: { accountId?: string; group?: s
         thumbnail: proxyImage(thumb(e.id)),
         live: stats?.live,
         upcoming: stats?.upcoming,
+        category: stats?.category,
         via: channel.via,
       };
     })

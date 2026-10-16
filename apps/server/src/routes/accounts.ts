@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { config } from "../config.ts";
 import { decrypt, encrypt, randomId, randomToken } from "../crypto.ts";
 import { db, pending } from "../db.ts";
-import { authorizationUrl, exchangeCode, revoke, userInfo } from "../google.ts";
+import { authorizationUrl, canWrite, exchangeCode, revoke, userInfo } from "../google.ts";
 import { type AppEnv, fail, requireUser, sessionUser } from "../http.ts";
 import { syncSubscriptions } from "../youtube/feed.ts";
 
@@ -73,14 +73,20 @@ accountRoutes.get("/links/google/start", (c) => {
   if (!config.google.configured) return c.redirect("/settings?link_error=not_configured#accounts");
   const backendId = c.req.query("backend") ?? "";
   if (!ownBackend(user.id, backendId)) return c.redirect("/settings?link_error=backend#accounts");
+  // write=1 also asks for permission to subscribe, rate and comment. account=<id>
+  // upgrades an existing linked account (Google pre-selects it via login_hint).
+  const write = c.req.query("write") === "1";
+  const upgrading = c.req.query("account")
+    ? (db.prepare("SELECT email FROM accounts WHERE id = ? AND user_id = ?").get(c.req.query("account")!, user.id) as { email: string } | undefined)
+    : undefined;
   const state = randomToken(24);
-  const { url, verifier } = authorizationUrl(state);
-  pending.put("google-link", state, { userId: user.id, backendId, verifier, returnTo: c.req.query("return") === "home" ? "/" : "/settings" });
+  const { url, verifier } = authorizationUrl(state, { write, loginHint: upgrading?.email });
+  pending.put("google-link", state, { userId: user.id, backendId, verifier, write, returnTo: c.req.query("return") === "home" ? "/" : "/settings" });
   return c.redirect(url);
 });
 
 accountRoutes.get("/links/google/callback", async (c) => {
-  const state = pending.take<{ userId: string; backendId: string; verifier: string; returnTo: string }>("google-link", c.req.query("state") ?? "");
+  const state = pending.take<{ userId: string; backendId: string; verifier: string; write?: boolean; returnTo: string }>("google-link", c.req.query("state") ?? "");
   const user = sessionUser(c);
   // The state is single-use and must belong to the signed-in user who started the flow.
   if (!state || !user || user.id !== state.userId) return c.redirect("/settings?link_error=expired#accounts");
@@ -99,14 +105,14 @@ accountRoutes.get("/links/google/callback", async (c) => {
   if (existing) {
     // Re-linking an account: refresh tokens and identity, keep the user's label and settings.
     db.prepare(
-      "UPDATE accounts SET name = ?, email = ?, avatar = ?, refresh_token = ?, access_token = ?, access_expires = ?, needs_relink = 0, synced_at = 0 WHERE id = ?",
-    ).run(who.name ?? who.email, who.email, who.picture ?? null, refresh, encrypt(tokens.access_token), Date.now() + tokens.expires_in * 1000, existing.id);
+      "UPDATE accounts SET name = ?, email = ?, avatar = ?, refresh_token = ?, access_token = ?, access_expires = ?, scopes = ?, needs_relink = 0, synced_at = 0 WHERE id = ?",
+    ).run(who.name ?? who.email, who.email, who.picture ?? null, refresh, encrypt(tokens.access_token), Date.now() + tokens.expires_in * 1000, tokens.scope, existing.id);
   } else {
     accountId = randomId();
     const n = (db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?").get(user.id) as { n: number }).n;
     db.prepare(
-      `INSERT INTO accounts (id, user_id, backend_id, label, name, email, avatar, google_sub, refresh_token, access_token, access_expires, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO accounts (id, user_id, backend_id, label, name, email, avatar, google_sub, refresh_token, access_token, access_expires, scopes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       accountId,
       user.id,
@@ -119,10 +125,13 @@ accountRoutes.get("/links/google/callback", async (c) => {
       refresh,
       encrypt(tokens.access_token),
       Date.now() + tokens.expires_in * 1000,
+      tokens.scope,
       Date.now(),
     );
   }
   // Pull the subscription list now so the feed is ready on return; errors surface later.
   await syncSubscriptions(accountId!, true).catch((error) => console.warn("initial sync failed:", (error as Error).message));
-  return c.redirect(`${state.returnTo}?linked=${accountId}${state.returnTo === "/settings" ? "#accounts" : ""}`);
+  // Asked for actions but Google's consent screen had that box unticked: linked read-only.
+  const result = state.write && !canWrite(tokens.scope) ? "link_error=write_denied" : `linked=${accountId}${state.write ? "&actions=1" : ""}`;
+  return c.redirect(`${state.returnTo}?${result}${state.returnTo === "/settings" ? "#accounts" : ""}`);
 });

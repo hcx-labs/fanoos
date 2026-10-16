@@ -59,9 +59,13 @@ export function useSearchShortcut() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       const typing = target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
-      if ((event.key === "k" && (event.metaKey || event.ctrlKey)) || (event.key === "/" && !typing)) {
+      if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         setOpen((value) => !value);
+      } else if (event.key === "/" && !typing) {
+        // "/" only opens search; it must never close it (URLs contain slashes).
+        event.preventDefault();
+        setOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -75,7 +79,7 @@ export function TopBar({ onSearch }: { onSearch: () => void }) {
   return (
     <header data-scrolled={scrolled || undefined} className="top-bar sticky top-0 z-40">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-6">
-        <Link to="/" className="shrink-0 rounded-lg" aria-label={`${brand.name} home`}>
+        <Link to="/" className="flex shrink-0 items-center rounded-lg" aria-label={`${brand.name} home`}>
           <Logo className="lg:w-52" />
         </Link>
 

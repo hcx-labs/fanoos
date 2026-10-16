@@ -3,6 +3,14 @@ const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
 export const formatCount = (value: number) => compact.format(value);
 
+const exact = new Intl.NumberFormat("en");
+
+/** "290,712 views", or "13M views" when YouTube only gave a rounded figure. */
+export function formatViews(video: { views: number; viewsApprox?: boolean }) {
+  if (!video.views) return "";
+  return `${video.viewsApprox ? compact.format(video.views) : exact.format(video.views)} ${video.views === 1 ? "view" : "views"}`;
+}
+
 export function formatDuration(totalSeconds: number) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(seconds / 3600);

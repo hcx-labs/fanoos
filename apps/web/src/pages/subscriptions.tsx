@@ -28,8 +28,10 @@ import { accountActions, useAccounts } from "@/lib/session";
 import { actions, useStore } from "@/lib/store";
 import type { Channel, LinkedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useTitle } from "@/hooks/use-title";
 
 export function SubscriptionsPage() {
+  useTitle("Your channels");
   const source = useSource();
   const { inFeed } = useAccounts();
   const [reload, setReload] = useState(0);

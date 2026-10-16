@@ -1,5 +1,6 @@
 import type { Backend, LinkedAccount, Me } from "@tube/shared";
 import { config } from "./config.ts";
+import { canWrite } from "./google.ts";
 import { randomId } from "./crypto.ts";
 import { db } from "./db.ts";
 import type { User } from "./http.ts";
@@ -14,6 +15,7 @@ type AccountRow = {
   avatar: string | null;
   in_feed: number;
   needs_relink: number;
+  scopes: string;
 };
 
 export function createUser(name: string, email: string, passwordHash: string | null): string {
@@ -46,7 +48,7 @@ export function backendsOf(userId: string): Backend[] {
 }
 
 export function accountsOf(userId: string): LinkedAccount[] {
-  return (db.prepare("SELECT id, backend_id, label, name, email, avatar, in_feed, needs_relink FROM accounts WHERE user_id = ? ORDER BY created_at").all(userId) as AccountRow[]).map(
+  return (db.prepare("SELECT id, backend_id, label, name, email, avatar, in_feed, needs_relink, scopes FROM accounts WHERE user_id = ? ORDER BY created_at").all(userId) as AccountRow[]).map(
     (a) => ({
       id: a.id,
       backendId: a.backend_id,
@@ -56,6 +58,7 @@ export function accountsOf(userId: string): LinkedAccount[] {
       avatar: a.avatar ? proxyImage(a.avatar) : undefined,
       inFeed: Boolean(a.in_feed),
       needsRelink: Boolean(a.needs_relink) || undefined,
+      canWrite: canWrite(a.scopes),
     }),
   );
 }

@@ -10,7 +10,7 @@ import type { Channel, Comment, CommentPage, CommentSort, SearchFilters, SearchR
 import { TtlCache } from "../cache.ts";
 import { randomToken } from "../crypto.ts";
 import { proxyImage } from "../media.ts";
-import { ago, chaptersFrom, clock, count, text, thumb } from "./parse.ts";
+import { ago, chaptersFrom, clock, count, isRounded, text, thumb } from "./parse.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Node = any;
@@ -59,6 +59,7 @@ export function lockupToVideo(n: Node): Video | null {
     channelAvatar: avatarOf(avatar),
     duration: durationBadge ? clock(durationBadge) : 0,
     views: count(views),
+    viewsApprox: isRounded(views),
     published: ago(age),
     description: "",
     thumbnail: proxyImage(thumb(n.content_id)),
@@ -80,6 +81,7 @@ function videoNode(v: Node): Video | null {
     channelVerified: Boolean(v.author?.is_verified),
     duration: v.duration?.seconds ?? clock(v.length_text),
     views: count(v.view_count ?? v.short_view_count),
+    viewsApprox: isRounded(v.view_count ?? v.short_view_count),
     published: ago(v.published),
     description: text(v.snippets?.[0]?.text ?? v.description_snippet),
     thumbnail: proxyImage(thumb(id)),

@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Check, Lock, Plus, Server, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { accountActions, useAccounts } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
-const can = ["See your subscriptions", "See your playlists", "See basic profile info"];
-const cannot = ["Post, comment or like as you", "See your watch history", "Change your account"];
+const read = ["See your subscriptions", "See your playlists", "See basic profile info"];
+const write = ["Subscribe and unsubscribe", "Like and dislike", "Comment and reply"];
 
 /**
  * Pick a backend, then sign in with Google through it. Sign-in happens on Google's
@@ -17,6 +18,11 @@ export function ConnectAccount({ backendId: fixedBackend, returnTo = "settings" 
   const { backends, accounts, googleConfigured } = useAccounts();
   const [choice, setChoice] = useState(fixedBackend ?? backends[0]?.id ?? "");
   const [leaving, setLeaving] = useState(false);
+  const [actions, setActions] = useState(true);
+  const can = actions ? [...read, ...write] : read;
+  const cannot = actions
+    ? ["See your watch history", "Upload or change your account", "Act without you pressing a button"]
+    : ["Subscribe, like or comment as you", "See your watch history", "Change your account"];
 
   return (
     <div className="space-y-5">
@@ -69,6 +75,16 @@ export function ConnectAccount({ backendId: fixedBackend, returnTo = "settings" 
         </div>
       </div>
 
+      <Label htmlFor="allow-actions" className="hover:bg-muted/60 flex items-start gap-3 rounded-xl border p-3 font-normal">
+        <Checkbox id="allow-actions" checked={actions} onCheckedChange={(on) => setActions(on === true)} className="mt-0.5" />
+        <span>
+          <span className="block text-sm font-medium">Allow subscribing, liking and commenting</span>
+          <span className="text-muted-foreground block text-xs">
+            Adds YouTube’s “manage your account” permission. Leave it off to link read-only; you can allow it later.
+          </span>
+        </span>
+      </Label>
+
       {googleConfigured ? (
         <Button
           size="lg"
@@ -76,7 +92,7 @@ export function ConnectAccount({ backendId: fixedBackend, returnTo = "settings" 
           disabled={!choice || leaving}
           onClick={() => {
             setLeaving(true);
-            accountActions.link(choice, returnTo);
+            accountActions.link(choice, returnTo, { write: actions });
           }}
         >
           <Lock /> Continue with Google
@@ -93,8 +109,7 @@ export function ConnectAccount({ backendId: fixedBackend, returnTo = "settings" 
         </div>
       )}
       <p className="text-muted-foreground text-xs">
-        Read-only access. Tokens are encrypted on the server, never stored in this browser, and you can revoke them any time from your Google
-        account.
+        Tokens are encrypted on the server, never stored in this browser, and you can revoke them any time from your Google account.
       </p>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, Pencil, Plus, RefreshCw, Server, Star, Trash2, TriangleAlert, UserPlus } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, RefreshCw, Server, Star, Trash2, TriangleAlert, UserPlus, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { ConnectAccount } from "@/components/accounts/connect-account";
@@ -73,11 +73,23 @@ export function AccountsManager() {
                             <Star className="fill-current" /> Default
                           </Badge>
                         )}
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                          title={account.canWrite ? "Can subscribe, like and comment" : "Can read subscriptions and playlists only"}
+                        >
+                          {account.canWrite ? "Can act" : "Read-only"}
+                        </Badge>
                       </p>
                       <p className="text-muted-foreground truncate text-xs">
                         {account.name} · {account.email}
                       </p>
                     </div>
+                    {!account.needsRelink && !account.canWrite && (
+                      <Button variant="outline" size="sm" onClick={() => accountActions.link(account.backendId, "settings", { write: true, accountId: account.id })}>
+                        <Zap /> Allow actions
+                      </Button>
+                    )}
                     {account.needsRelink ? (
                       <Button variant="outline" size="sm" onClick={() => accountActions.link(account.backendId)}>
                         <TriangleAlert className="text-brand-strong" /> Link again

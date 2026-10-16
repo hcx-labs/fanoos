@@ -15,10 +15,27 @@ A privacy-first video client. This is the frontend only, running on demo data. T
 ```sh
 npm install
 cp apps/server/.env.example apps/server/.env   # then add your Google OAuth client (below)
-npm run dev                                     # web :5180, API :8787, streaming companion :8282
+npm run dev                                     # web :5180, API :8787, companion :8282, Redis :6379
 ```
 
-Needs Node 24+ and [Deno](https://deno.com) (`brew install deno`) for the streaming companion. After cloning, run `git submodule update --init`.
+Needs Node 24+, [Deno](https://deno.com) (`brew install deno`) for the streaming companion, and Redis (`brew install redis`) for the response cache. After cloning, run `git submodule update --init`.
+
+### Single sign-on (OIDC)
+
+Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (optionally `OIDC_SCOPES` and `OIDC_NAME`, the button label) in `apps/server/.env`, and register `${PUBLIC_URL}/api/auth/oidc/callback` as a redirect URI with your provider (Authentik, Keycloak, Authelia, and so on). When OIDC is on:
+
+- The sign-in page shows only "Continue with <name>". The server refuses password and passkey sign-in, sign-up and passkey registration, and treats existing password or passkey sessions as signed out.
+- Accounts are created automatically on first sign-in, with no approval step.
+- If the provider marks the email as verified and a Fanoos account already uses that email, the two are linked (keeping its data and ownership). An unverified email that matches an existing account is refused.
+- The flow is the authorization code flow with PKCE, `state` (bound to the browser) and `nonce`. ID tokens are checked against the provider's JWKS, issuer, audience and expiry.
+
+Signing out ends the Fanoos session only, not the provider's.
+
+### Caching (Redis)
+
+`npm run redis` starts a local, memory-only Redis (256 MB, least-recently-used eviction, nothing written to disk). The API caches YouTube responses there for `CACHE_TTL_SECONDS` (default 600): video and channel pages, search, playlists, channel uploads, video stats and categories, SponsorBlock, Return YouTube Dislike, DeArrow, playability and stream manifests, and each account's ratings. The cache survives API restarts. Failures are never cached. Without `REDIS_URL`, a bounded in-memory cache is used instead.
+
+Channel uploads come from YouTube's RSS feeds, which often return 404 or 500. When they do, the API falls back to the channel's videos tab through YouTube.js.
 
 ### Streaming (Invidious companion)
 

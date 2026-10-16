@@ -30,6 +30,17 @@ const password = (value: unknown) => {
 
 export const authRoutes = new Hono<AppEnv>();
 
+/** Public: how this server signs people in (read by the sign-in page). */
+authRoutes.get("/config", (c) => c.json({ oidc: config.oidc.enabled ? { name: config.oidc.name } : null }));
+
+// With OIDC on, password and passkey sign-in, sign-up and passkey registration are off.
+for (const path of ["/register", "/login", "/passkey/*"]) {
+  authRoutes.use(path, async (_c, next) => {
+    if (config.oidc.enabled) throw fail(403, `Sign in with ${config.oidc.name} instead.`, "oidc_only");
+    await next();
+  });
+}
+
 authRoutes.post("/register", async (c) => {
   const body = await c.req.json<{ name?: string; email?: string; password?: string }>();
   const name = body.name?.trim().slice(0, 80);

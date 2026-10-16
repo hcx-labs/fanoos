@@ -14,11 +14,13 @@ import { useData } from "@/hooks/use-data";
 import { formatCount, hueFor } from "@/lib/format";
 import { useSource } from "@/lib/source";
 import { actions, useStore } from "@/lib/store";
+import { useTitle } from "@/hooks/use-title";
 
 export function ChannelPage() {
   const { id = "" } = useParams();
   const source = useSource();
   const state = useData(() => source.channel(id), [source.key, id]);
+  useTitle(state.data?.channel.name ?? (state.status === "loading" ? null : "Channel not found"));
   const muted = useStore((s) => s.muted.includes(id));
   const [sort, setSort] = useState<"new" | "popular">("new");
   const [filter, setFilter] = useState("");

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, SearchX, ShieldCheck } from "lucide-react";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { VideoRow } from "@/components/video-card";
@@ -10,16 +10,27 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useData } from "@/hooks/use-data";
 import { formatCount } from "@/lib/format";
+import { openYouTubeLink } from "@/lib/open-link";
 import { paths } from "@/lib/paths";
+import { parseYouTubeLink } from "@/lib/youtube-url";
 import { useSource, type SearchFilters } from "@/lib/source";
+import { useTitle } from "@/hooks/use-title";
 
 const defaults: SearchFilters = { type: "all", duration: "any", uploaded: "any", sort: "relevance" };
 
 export function SearchPage() {
   const [params] = useSearchParams();
   const query = params.get("q") ?? "";
+  const navigate = useNavigate();
+  const link = parseYouTubeLink(query);
+  useTitle(query ? `${query} – Search` : "Search");
   const [filters, setFilters] = useState(defaults);
   const source = useSource();
+  // A YouTube link that reaches the search page (e.g. pasted into the address bar) opens directly.
+  useEffect(() => {
+    if (link) void openYouTubeLink(link, navigate, source, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
   const state = useData(() => source.search(query, filters), [source.key, query, filters]);
   const set = <K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) => setFilters((f) => ({ ...f, [key]: value }));
   const changed = JSON.stringify(filters) !== JSON.stringify(defaults);

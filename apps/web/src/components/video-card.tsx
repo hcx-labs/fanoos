@@ -3,7 +3,7 @@ import { Clock3, CircleCheck, Radio } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatAgo, formatCount, formatDuration } from "@/lib/format";
+import { formatAgo, formatDuration, formatViews } from "@/lib/format";
 import { paths } from "@/lib/paths";
 import { segmentMeta } from "@/lib/segments";
 import { actions, useProgress, useSettings, useStore } from "@/lib/store";
@@ -97,7 +97,7 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
 function Meta({ video, className }: { video: Video; className?: string }) {
   return (
     <p className={cn("text-muted-foreground text-xs", className)}>
-      {[video.views ? `${formatCount(video.views)} views` : null, formatAgo(video.published) || null].filter(Boolean).join(" · ")}
+      {[formatViews(video), formatAgo(video.published)].filter(Boolean).join(" · ")}
       <ViaDots via={video.via} className="ml-2" />
     </p>
   );

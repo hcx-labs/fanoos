@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   avatar TEXT,
   PRIMARY KEY (account_id, channel_id)
 );
+CREATE TABLE IF NOT EXISTS oidc_identities (
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (issuer, subject)
+);
 CREATE TABLE IF NOT EXISTS user_data (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data TEXT NOT NULL,
@@ -78,6 +84,19 @@ CREATE TABLE IF NOT EXISTS channel_groups (
   PRIMARY KEY (user_id, channel_id)
 );
 `);
+
+// Additive migrations for databases created by earlier versions.
+for (const statement of [
+  "ALTER TABLE accounts ADD COLUMN scopes TEXT NOT NULL DEFAULT ''",
+  // How the session was created: "local" (password/passkey) or "oidc".
+  "ALTER TABLE sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'local'",
+]) {
+  try {
+    db.exec(statement);
+  } catch {
+    // Column already exists.
+  }
+}
 
 // Housekeeping: drop expired sessions and pending challenges.
 export function sweep() {

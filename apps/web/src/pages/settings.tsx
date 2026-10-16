@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Ban, Eye, Fingerprint, Gauge, ShieldCheck, Sparkles, Trash2, Tv, Volume2, FastForward } from "lucide-react";
 import { toast } from "sonner";
@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { segmentMeta, segmentOrder } from "@/lib/segments";
-import { authActions, useProfile } from "@/lib/session";
+import { authActions, getAuthConfig, useProfile } from "@/lib/session";
 import { actions, useSettings, type SegmentAction, type Settings } from "@/lib/store";
 import { useTheme, type Theme } from "@/lib/theme";
+import { useTitle } from "@/hooks/use-title";
 
 const sections = [
   { id: "profile", label: "Account" },
@@ -29,11 +30,17 @@ const sections = [
 ];
 
 export function SettingsPage() {
+  useTitle("Settings");
   const settings = useSettings();
   const { theme, setTheme } = useTheme();
   const { hash, search } = useLocation();
   const navigate = useNavigate();
   const profile = useProfile();
+  // With single sign-on, passkeys and passwords don't apply.
+  const [sso, setSso] = useState<{ name: string } | null>(null);
+  useEffect(() => {
+    void getAuthConfig().then((c) => setSso(c.oidc));
+  }, []);
   // Client-side navigation doesn't scroll to #anchors on its own.
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: "smooth" });
@@ -42,7 +49,12 @@ export function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(search);
     const error = params.get("link_error");
-    if (params.has("linked")) toast.success("Account linked", { description: "Its subscriptions are now part of your feed." });
+    if (params.has("linked"))
+      toast.success(params.has("actions") ? "Account linked, with actions" : "Account linked", {
+        description: params.has("actions")
+          ? "It can now subscribe, like and comment, and its subscriptions are in your feed."
+          : "Its subscriptions are now part of your feed.",
+      });
     if (error)
       toast.error("Linking didn't finish", {
         description:
@@ -51,6 +63,7 @@ export function SettingsPage() {
             access_denied: "Access wasn't granted on Google's page.",
             expired: "The sign-in took too long or was opened in another session. Try again.",
             scope: "YouTube access wasn't granted. Tick the YouTube permission when Google asks.",
+            write_denied: "The account was linked read-only: the “manage your YouTube account” box wasn't ticked on Google's page. Use Allow actions to try again.",
           }[error] ?? "Try again.",
       });
     if (params.has("linked") || error) navigate(`/settings${hash}`, { replace: true });
@@ -77,22 +90,29 @@ export function SettingsPage() {
             <div className="min-w-0 flex-1">
               <p className="font-semibold">{profile?.name}</p>
               <p className="text-muted-foreground text-xs">
-                {profile?.email} · {profile?.passkeys ? `${profile.passkeys} passkey${profile.passkeys === 1 ? "" : "s"}` : "no passkeys"}
+                {profile?.email} ·{" "}
+                {sso
+                  ? `signed in with ${sso.name}`
+                  : profile?.passkeys
+                    ? `${profile.passkeys} passkey${profile.passkeys === 1 ? "" : "s"}`
+                    : "no passkeys"}
               </p>
             </div>
-            <Button
-              variant="outline"
-              onClick={() =>
-                authActions
-                  .passkeyRegister()
-                  .then(() => toast.success("Passkey added"))
-                  .catch((e: Error) => {
-                    if (e.name !== "NotAllowedError") toast.error("Couldn't add the passkey", { description: e.message });
-                  })
-              }
-            >
-              <Fingerprint /> Add a passkey
-            </Button>
+            {!sso && (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  authActions
+                    .passkeyRegister()
+                    .then(() => toast.success("Passkey added"))
+                    .catch((e: Error) => {
+                      if (e.name !== "NotAllowedError") toast.error("Couldn't add the passkey", { description: e.message });
+                    })
+                }
+              >
+                <Fingerprint /> Add a passkey
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={async () => {

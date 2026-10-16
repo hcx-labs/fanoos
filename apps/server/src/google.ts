@@ -9,8 +9,11 @@ import { decrypt, encrypt, randomToken } from "./crypto.ts";
 import { db } from "./db.ts";
 
 export const SCOPES = ["openid", "email", "profile", "https://www.googleapis.com/auth/youtube.readonly"];
+/** Needed for subscribing, rating and commenting. Requested only when the user opts in. */
+export const WRITE_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
+export const canWrite = (scopes: string) => scopes.split(" ").includes(WRITE_SCOPE);
 
-export function authorizationUrl(state: string) {
+export function authorizationUrl(state: string, opts: { write?: boolean; loginHint?: string } = {}) {
   const verifier = randomToken(48);
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -18,7 +21,9 @@ export function authorizationUrl(state: string) {
     client_id: config.google.clientId,
     redirect_uri: config.google.redirectUri,
     response_type: "code",
-    scope: SCOPES.join(" "),
+    scope: [...SCOPES, ...(opts.write ? [WRITE_SCOPE] : [])].join(" "),
+    include_granted_scopes: "true",
+    ...(opts.loginHint ? { login_hint: opts.loginHint } : {}),
     access_type: "offline",
     prompt: "consent select_account",
     state,
@@ -80,16 +85,39 @@ export async function accessToken(accountId: string): Promise<string> {
   }
 }
 
-async function dataApi<T>(accountId: string, path: string, params: Record<string, string>): Promise<T> {
+/** The project's daily Data API quota is used up. */
+export class QuotaExceeded extends Error {}
+/** The account hasn't granted the permission this action needs. */
+export class WriteNotAllowed extends Error {}
+
+async function dataApi<T>(
+  accountId: string,
+  path: string,
+  params: Record<string, string>,
+  init: { method?: string; body?: unknown } = {},
+): Promise<T> {
   const token = await accessToken(accountId);
   const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
   url.search = new URLSearchParams(params).toString();
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetch(url, {
+    method: init.method ?? "GET",
+    headers: { authorization: `Bearer ${token}`, ...(init.body ? { "content-type": "application/json" } : {}) },
+    body: init.body ? JSON.stringify(init.body) : undefined,
+    signal: AbortSignal.timeout(15_000),
+  });
   if (res.status === 401) {
     db.prepare("UPDATE accounts SET access_expires = 0 WHERE id = ?").run(accountId);
     throw new RelinkRequired();
   }
-  if (!res.ok) throw new Error(`YouTube Data API ${path}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  if (res.status === 204) return undefined as T;
+  if (!res.ok) {
+    const text = await res.text();
+    const reason = (JSON.parse(text || "{}") as { error?: { errors?: { reason?: string }[] } }).error?.errors?.[0]?.reason ?? "";
+    if (/quotaExceeded|dailyLimitExceeded|rateLimitExceeded/.test(reason)) throw new QuotaExceeded();
+    if (res.status === 403 && /insufficientPermissions|forbidden|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(reason + text)) throw new WriteNotAllowed();
+    const error = new Error(`YouTube Data API ${path}: ${res.status} ${reason || text.slice(0, 200)}`);
+    throw Object.assign(error, { status: res.status, reason });
+  }
   return (await res.json()) as T;
 }
 
@@ -132,15 +160,44 @@ export function isoDuration(value: string) {
   return Number(m[1] ?? 0) * 86400 + Number(m[2] ?? 0) * 3600 + Number(m[3] ?? 0) * 60 + Number(m[4] ?? 0);
 }
 
-export type VideoStats = { duration: number; views: number; likes?: number; live: boolean; upcoming: boolean };
+export type VideoStats = { duration: number; views: number; likes?: number; live: boolean; upcoming: boolean; category?: string };
 
-/** Duration, views and live state for up to 50 videos per call (1 quota unit). */
-export async function fetchVideoStats(accountId: string, ids: string[]): Promise<Map<string, VideoStats>> {
+/** YouTube's video categories, with shorter labels for filter chips. */
+const categories: Record<string, string> = {
+  "1": "Film & Animation", "2": "Autos", "10": "Music", "15": "Animals", "17": "Sports", "19": "Travel",
+  "20": "Gaming", "22": "Vlogs", "23": "Comedy", "24": "Entertainment", "25": "News", "26": "How-to & Style",
+  "27": "Education", "28": "Science & Tech", "29": "Activism", "30": "Movies", "43": "Shows",
+};
+
+/** Public Data API call with the server's API key (no user identity, no user quota). */
+async function publicDataApi<T>(path: string, params: Record<string, string>): Promise<T> {
+  const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
+  url.search = new URLSearchParams({ ...params, key: config.youtubeApiKey }).toString();
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`YouTube Data API ${path}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * Duration, views, live state and category for up to 50 videos per call (1 quota unit).
+ * Uses the server's API key when set, otherwise the given linked account.
+ */
+export async function fetchVideoStats(accountId: string | null, ids: string[]): Promise<Map<string, VideoStats>> {
   const out = new Map<string, VideoStats>();
+  type Page = {
+    items: {
+      id: string;
+      snippet: { liveBroadcastContent: string; categoryId?: string };
+      contentDetails: { duration: string };
+      statistics: { viewCount?: string; likeCount?: string };
+    }[];
+  };
   for (let i = 0; i < ids.length; i += 50) {
-    const page = await dataApi<{
-      items: { id: string; snippet: { liveBroadcastContent: string }; contentDetails: { duration: string }; statistics: { viewCount?: string; likeCount?: string } }[];
-    }>(accountId, "videos", { part: "snippet,contentDetails,statistics", id: ids.slice(i, i + 50).join(","), maxResults: "50" });
+    const params = { part: "snippet,contentDetails,statistics", id: ids.slice(i, i + 50).join(","), maxResults: "50" };
+    let page: Page;
+    if (config.youtubeApiKey) page = await publicDataApi<Page>("videos", params);
+    else if (accountId) page = await dataApi<Page>(accountId, "videos", params);
+    else return out;
     for (const v of page.items) {
       out.set(v.id, {
         duration: isoDuration(v.contentDetails.duration),
@@ -148,8 +205,60 @@ export async function fetchVideoStats(accountId: string, ids: string[]): Promise
         likes: v.statistics.likeCount ? Number(v.statistics.likeCount) : undefined,
         live: v.snippet.liveBroadcastContent === "live",
         upcoming: v.snippet.liveBroadcastContent === "upcoming",
+        category: v.snippet.categoryId ? categories[v.snippet.categoryId] : undefined,
       });
     }
   }
   return out;
+}
+
+// Writes (need WRITE_SCOPE). Each costs 50 quota units.
+
+export async function subscribe(accountId: string, channelId: string) {
+  const res = await dataApi<{ snippet: { title: string; thumbnails: Thumbs } }>(
+    accountId,
+    "subscriptions",
+    { part: "snippet" },
+    { method: "POST", body: { snippet: { resourceId: { kind: "youtube#channel", channelId } } } },
+  );
+  return { title: res.snippet.title, avatar: res.snippet.thumbnails.default?.url };
+}
+
+export async function unsubscribe(accountId: string, channelId: string) {
+  const found = await dataApi<{ items: { id: string }[] }>(accountId, "subscriptions", { part: "id", mine: "true", forChannelId: channelId });
+  for (const item of found.items) await dataApi(accountId, "subscriptions", { id: item.id }, { method: "DELETE" });
+}
+
+export type Rating = "like" | "dislike" | "none";
+
+export async function rate(accountId: string, videoId: string, rating: Rating) {
+  await dataApi(accountId, "videos/rate", { id: videoId, rating }, { method: "POST" });
+}
+
+export async function getRating(accountId: string, videoId: string): Promise<Rating> {
+  const res = await dataApi<{ items: { rating: string }[] }>(accountId, "videos/getRating", { id: videoId });
+  const r = res.items[0]?.rating;
+  return r === "like" || r === "dislike" ? r : "none";
+}
+
+type CommentSnippet = { authorDisplayName: string; authorProfileImageUrl?: string; textOriginal?: string; textDisplay: string; likeCount: number };
+
+/** Posts a top-level comment, or a reply when parentId is given. Returns what was posted. */
+export async function postComment(accountId: string, videoId: string, text: string, parentId?: string) {
+  if (parentId) {
+    const res = await dataApi<{ id: string; snippet: CommentSnippet }>(
+      accountId,
+      "comments",
+      { part: "snippet" },
+      { method: "POST", body: { snippet: { parentId, textOriginal: text } } },
+    );
+    return { id: res.id, snippet: res.snippet };
+  }
+  const res = await dataApi<{ snippet: { topLevelComment: { id: string; snippet: CommentSnippet } } }>(
+    accountId,
+    "commentThreads",
+    { part: "snippet" },
+    { method: "POST", body: { snippet: { videoId, topLevelComment: { snippet: { textOriginal: text } } } } },
+  );
+  return { id: res.snippet.topLevelComment.id, snippet: res.snippet.topLevelComment.snippet };
 }

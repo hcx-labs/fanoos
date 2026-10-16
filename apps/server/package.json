@@ -18,6 +18,8 @@
     "@tube/shared": "*",
     "fast-xml-parser": "^5.11.2",
     "hono": "^4.13.13",
+    "jose": "^6.2.12",
+    "redis": "^6.3.0",
     "youtubei.js": "^18.1.0"
   }
 }

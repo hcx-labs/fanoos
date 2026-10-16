@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   Check,
@@ -14,35 +14,43 @@ import {
   ThumbsUp,
   Wand2,
 } from "lucide-react";
+import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
 import { ChannelAvatar } from "@/components/channel-avatar";
+import { RichText } from "@/components/rich-text";
 import { Player, type PlayerHandle } from "@/components/player/player";
 import { VideoRow, useVideoTitle } from "@/components/video-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useData } from "@/hooks/use-data";
-import { formatAgo, formatCount, formatDuration } from "@/lib/format";
+import { formatAgo, formatCount, formatDuration, formatViews } from "@/lib/format";
 import { segmentMeta } from "@/lib/segments";
 import { paths } from "@/lib/paths";
-import { useSource, type CommentSort } from "@/lib/source";
-import { useAccounts } from "@/lib/session";
+import { useSource, type CommentSort, type Rating } from "@/lib/source";
+import { accountActions, useAccounts } from "@/lib/session";
 import { actions, useSettings, useStore } from "@/lib/store";
-import type { Channel, Comment, Video } from "@/lib/types";
+import type { Channel, Comment, Segment, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useTitle } from "@/hooks/use-title";
 
 export function WatchPage() {
   const { id = "" } = useParams();
+  const [params] = useSearchParams();
+  const startAt = Number(params.get("t")) || undefined;
   const source = useSource();
   const state = useData(() => source.video(id), [source.key, id]);
+  const { dearrow } = useSettings();
+  const loaded = state.data?.video;
+  useTitle(loaded ? (dearrow && loaded.altTitle ? loaded.altTitle : loaded.title) : state.status === "loading" ? null : "Video unavailable");
   const [theater, setTheater] = useState(false);
   const [time, setTime] = useState(0);
   const player = useRef<PlayerHandle>(null);
@@ -83,6 +91,7 @@ export function WatchPage() {
             ref={player}
             video={video}
             stream={stream}
+            startAt={startAt}
             next={next[0]}
             theater={theater}
             onTheaterChange={setTheater}
@@ -105,12 +114,39 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
   const settings = useSettings();
   const title = useVideoTitle(video);
   const later = useStore((s) => s.watchLater.includes(video.id));
-  const [vote, setVote] = useState<"like" | "dislike" | null>(null);
-  const { active } = useAccounts();
+  const { active, accounts } = useAccounts();
   const [expanded, setExpanded] = useState(false);
+  const source = useSource();
 
-  const likes = (video.likes ?? 0) + (vote === "like" ? 1 : 0);
-  const dislikes = (video.dislikes ?? 0) + (vote === "dislike" ? 1 : 0);
+  // Ratings act as the default account when it can, else the first account that can.
+  const actor = active?.canWrite ? active : accounts.find((a) => a.canWrite && !a.needsRelink);
+  const initial = useData(() => (actor ? source.rating(actor.id, video.id).then((r) => r.rating) : Promise.resolve<Rating>("none")), [actor?.id, video.id]);
+  const [vote, setVote] = useState<Rating | null>(null);
+  const current: Rating = vote ?? initial.data ?? "none";
+
+  // Public counts already include this account's earlier rating; don't count it twice.
+  const likes = (video.likes ?? 0) - (initial.data === "like" ? 1 : 0) + (current === "like" ? 1 : 0);
+  const dislikes = (video.dislikes ?? 0) - (initial.data === "dislike" ? 1 : 0) + (current === "dislike" ? 1 : 0);
+
+  const rateAs = async (rating: Rating) => {
+    if (!actor) {
+      const first = accounts.find((a) => !a.needsRelink);
+      toast("Liking needs an account that allows actions", {
+        description: "Linked accounts are read-only until you allow actions.",
+        action: first ? { label: "Allow actions", onClick: () => accountActions.link(first.backendId, "settings", { write: true, accountId: first.id }) } : undefined,
+      });
+      return;
+    }
+    const next: Rating = current === rating ? "none" : rating;
+    const before = current;
+    setVote(next);
+    try {
+      await source.rate(actor.id, video.id, next);
+    } catch (e) {
+      setVote(before);
+      toast.error("Couldn't save your rating", { description: (e as Error).message });
+    }
+  };
   const segments = video.segments ?? [];
   const chapters = video.chapters ?? [];
   const ratio = likes / Math.max(1, likes + dislikes);
@@ -119,7 +155,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
   return (
     <section className="@container mt-5">
       <div className="flex items-start gap-2">
-        <h1 className="font-display text-xl leading-tight font-semibold text-balance sm:text-2xl">{title}</h1>
+        <h1 className="font-display text-xl leading-tight font-semibold text-pretty sm:text-2xl">{title}</h1>
         {community && (
           <HoverCard openDelay={150}>
             <HoverCardTrigger asChild>
@@ -159,21 +195,21 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
               <Button
                 variant="secondary"
                 className="rounded-l-full pl-4"
-                aria-pressed={vote === "like"}
-                title={active ? `Like as ${active.label}` : undefined}
-                onClick={() => setVote(vote === "like" ? null : "like")}
+                aria-pressed={current === "like"}
+                title={actor ? `Like as ${actor.label}` : "Like (needs an account that allows actions)"}
+                onClick={() => void rateAs("like")}
               >
-                <ThumbsUp className={cn(vote === "like" && "fill-current text-like")} />
+                <ThumbsUp className={cn(current === "like" && "fill-current text-like")} />
                 <span className="tabular-nums">{formatCount(likes)}</span>
               </Button>
               <Button
                 variant="secondary"
                 className="rounded-r-full pr-4"
-                aria-pressed={vote === "dislike"}
-                title={active ? `Dislike as ${active.label}` : undefined}
-                onClick={() => setVote(vote === "dislike" ? null : "dislike")}
+                aria-pressed={current === "dislike"}
+                title={actor ? `Dislike as ${actor.label}` : "Dislike (needs an account that allows actions)"}
+                onClick={() => void rateAs("dislike")}
               >
-                <ThumbsDown className={cn(vote === "dislike" && "fill-current text-dislike")} />
+                <ThumbsDown className={cn(current === "dislike" && "fill-current text-dislike")} />
                 {settings.dislikes && <span className="tabular-nums">{formatCount(dislikes)}</span>}
               </Button>
             </ButtonGroup>
@@ -214,22 +250,15 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
       </div>
 
       <div className="bg-secondary/70 mt-5 rounded-2xl p-4 text-sm">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 font-medium">
-          <span>
-            {[video.views ? `${formatCount(video.views)} views` : null, formatAgo(video.published) || null].filter(Boolean).join(" · ")}
+        <div className="flex min-w-0 items-center gap-3 font-medium whitespace-nowrap">
+          <span className="shrink-0">
+            {[formatViews(video), formatAgo(video.published)].filter(Boolean).join(" · ")}
           </span>
-          {segments.length > 0 && (
-            <span className="inline-flex flex-wrap gap-1">
-              {segments.map((s, i) => (
-                <Badge key={i} variant="outline" className="gap-1.5 text-[11px]">
-                  <span className="size-1.5 rounded-full" style={{ background: segmentMeta[s.category].color }} />
-                  {segmentMeta[s.category].label}
-                </Badge>
-              ))}
-            </span>
-          )}
+          {segments.length > 0 && <SegmentSummary segments={segments} />}
         </div>
-        <div className={cn("relative mt-2 whitespace-pre-line", !expanded && "line-clamp-3")}>{video.description}</div>
+        <div className={cn("relative mt-2 break-words whitespace-pre-line", !expanded && "line-clamp-3")}>
+          <RichText text={video.description} onSeek={onSeek} maxSeconds={video.duration} />
+        </div>
         {expanded && chapters.length > 1 && (
           <div className="mt-4">
             <p className="mb-2 font-semibold">Chapters</p>
@@ -349,9 +378,7 @@ function Comments({ video }: { video: Video }) {
           </TabsList>
         </Tabs>
       </div>
-      <p className="text-muted-foreground mt-3 flex items-center gap-1.5 text-xs">
-        <Info className="size-3.5" /> Read-only for now: linked accounts can't post comments yet.
-      </p>
+      <CommentComposer videoId={video.id} onPosted={(c) => setMore((m) => ({ ...m, comments: [c, ...m.comments] }))} />
 
       <div className="mt-6 space-y-6">
         {first.status === "loading" &&
@@ -408,7 +435,9 @@ function CommentItem({ comment, reply }: { comment: Comment; reply?: boolean }) 
           <span className={cn("font-semibold", comment.byCreator && "bg-foreground text-background rounded-full px-2 py-0.5")}>{comment.author}</span>
           <span className="text-muted-foreground">{comment.publishedText}</span>
         </p>
-        <p className="mt-1 text-sm leading-relaxed break-words whitespace-pre-line">{comment.text}</p>
+        <p className="mt-1 text-sm leading-relaxed break-words whitespace-pre-line">
+          <RichText text={comment.text} />
+        </p>
         <div className="text-muted-foreground mt-1.5 flex items-center gap-3 text-xs">
           {comment.likes > 0 && (
             <span className="inline-flex items-center gap-1">
@@ -483,5 +512,130 @@ function WatchSkeleton() {
         ))}
       </div>
     </div>
+  );
+}
+
+/** One line: a dot per segment type (with count), the skippable total, and a breakdown on hover. */
+function SegmentSummary({ segments }: { segments: Segment[] }) {
+  const settings = useSettings();
+  const byCategory = new Map<Segment["category"], { count: number; seconds: number }>();
+  for (const s of segments) {
+    const entry = byCategory.get(s.category) ?? { count: 0, seconds: 0 };
+    byCategory.set(s.category, { count: entry.count + 1, seconds: entry.seconds + (s.end - s.start) });
+  }
+  const total = segments.reduce((t, s) => t + s.end - s.start, 0);
+  const skipped = segments.filter((s) => settings.segments[s.category] === "skip").reduce((t, s) => t + s.end - s.start, 0);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="text-muted-foreground ml-auto inline-flex min-w-0 items-center gap-3 text-xs font-normal">
+          <span className="inline-flex shrink-0 items-center gap-3">
+            {[...byCategory].map(([category, { count }]) => (
+              <span key={category} className="inline-flex items-center gap-1">
+                <span className="size-2.5 rounded-full" style={{ background: segmentMeta[category].color }} />
+                {count > 1 && <span className="tabular-nums">×{count}</span>}
+              </span>
+            ))}
+          </span>
+          <span className="truncate">
+            {skipped > 0 ? `${formatDuration(skipped)} skipped` : `${formatDuration(total)} in segments`}
+          </span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="flex-col items-stretch gap-1 py-2">
+        {[...byCategory].map(([category, { count, seconds }]) => (
+          <span key={category} className="flex items-center gap-2">
+            <span className="size-2 rounded-full" style={{ background: segmentMeta[category].color }} />
+            <span className="flex-1">
+              {segmentMeta[category].label}
+              {count > 1 ? ` ×${count}` : ""}
+            </span>
+            <span className="tabular-nums opacity-70">{formatDuration(seconds)}</span>
+          </span>
+        ))}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Post a comment as an account that allows actions. */
+function CommentComposer({ videoId, onPosted }: { videoId: string; onPosted: (comment: Comment) => void }) {
+  const { accounts, active } = useAccounts();
+  const source = useSource();
+  const writable = accounts.filter((a) => a.canWrite && !a.needsRelink);
+  const [as, setAs] = useState((active?.canWrite ? active : writable[0])?.id ?? "");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!writable.length)
+    return (
+      <p className="text-muted-foreground mt-3 flex items-center gap-1.5 text-xs">
+        <Info className="size-3.5" /> To comment, allow actions for a linked account in Settings.
+      </p>
+    );
+  const author = writable.find((a) => a.id === as) ?? writable[0]!;
+  const post = async () => {
+    setBusy(true);
+    try {
+      onPosted(await source.comment(author.id, videoId, text));
+      setText("");
+      toast.success("Comment posted");
+    } catch (e) {
+      toast.error("Couldn't post your comment", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="mt-4 flex gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (text.trim()) void post();
+      }}
+    >
+      <AccountAvatar account={author} className="mt-0.5 size-9" textClassName="text-xs" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={`Add a comment as ${author.label}…`}
+          rows={2}
+          aria-label={`Add a comment as ${author.label}`}
+          className="w-full resize-y rounded-xl border bg-transparent px-3 py-2 font-sans text-sm"
+        />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {writable.length > 1 ? (
+            <Select value={author.id} onValueChange={setAs}>
+              <SelectTrigger size="sm" className="mr-auto rounded-full" aria-label="Comment as">
+                <span className="text-muted-foreground">Commenting as</span>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {writable.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-muted-foreground mr-auto text-xs">
+              Commenting as <span className="text-foreground font-medium">{author.label}</span>
+              {author.name && author.name !== author.label ? ` (${author.name})` : ""}
+            </span>
+          )}
+          {text.trim() && (
+            <>
+              <Button type="button" variant="ghost" onClick={() => setText("")}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy && <Spinner />} Comment
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </form>
   );
 }

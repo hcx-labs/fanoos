@@ -12,6 +12,7 @@ import { useSource } from "@/lib/source";
 import { useAccounts } from "@/lib/session";
 import { actions, useSettings, useStore } from "@/lib/store";
 import type { Video } from "@/lib/types";
+import { useTitle } from "@/hooks/use-title";
 
 /** Resolve stored video ids through the current backend; returns a lookup. */
 function useVideoLookup(ids: string[]) {
@@ -22,6 +23,7 @@ function useVideoLookup(ids: string[]) {
 }
 
 export function LibraryPage() {
+  useTitle("Library");
   return (
     <div className="relative">
       <div className="page relative">

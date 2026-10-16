@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { CommentSort, Playlist, SearchFilters, VideoDetail } from "@tube/shared";
-import { TtlCache } from "../cache.ts";
+import type { CommentSort, Playlist, SearchFilters, SearchResults, VideoDetail } from "@tube/shared";
+import { SharedCache } from "../cache.ts";
 import { config } from "../config.ts";
 import { db } from "../db.ts";
 import { fetchPlaylists, RelinkRequired } from "../google.ts";
@@ -8,7 +8,7 @@ import { type AppEnv, fail, requireUser } from "../http.ts";
 import { proxyImage } from "../media.ts";
 import { communityTitle, segments, votes } from "../youtube/extras.ts";
 import { feed, subscribers, subscriptions } from "../youtube/feed.ts";
-import { channelPage, comments, replies, search, videoDetail } from "../youtube/innertube.ts";
+import { channelPage, comments, replies, search, videoDetail, yt } from "../youtube/innertube.ts";
 import { dashManifest, playability } from "../youtube/stream.ts";
 
 export const contentRoutes = new Hono<AppEnv>();
@@ -63,7 +63,9 @@ contentRoutes.get("/playlists", async (c) => {
   const lists = await Promise.all(
     accounts.map(async (a) => {
       try {
-        return (await fetchPlaylists(a.id)).map((p): Playlist => ({ ...p, accountId: a.id, thumbnail: proxyImage(p.thumbnail) }));
+        return await playlistCache.get(a.id, async () =>
+          (await fetchPlaylists(a.id)).map((p): Playlist => ({ ...p, accountId: a.id, thumbnail: proxyImage(p.thumbnail) })),
+        );
       } catch {
         return [];
       }
@@ -75,8 +77,10 @@ contentRoutes.get("/playlists", async (c) => {
 /** Bump when the manifest or its segment-URL format changes. */
 const MANIFEST_VERSION = 2;
 
-const details = new TtlCache<Omit<VideoDetail, "stream">>(10 * 60_000, 500);
-const channels = new TtlCache<Awaited<ReturnType<typeof channelPage>>>(15 * 60_000, 300);
+const details = new SharedCache<Omit<VideoDetail, "stream">>("video");
+const channels = new SharedCache<Awaited<ReturnType<typeof channelPage>>>("channel");
+const searches = new SharedCache<SearchResults>("search");
+const playlistCache = new SharedCache<Playlist[]>("playlists");
 const channelCached = (id: string) => channels.get(id, () => channelPage(id));
 
 /** Channels any of the user's linked accounts subscribe to. */
@@ -96,18 +100,27 @@ contentRoutes.get("/videos/:id", async (c) => {
     segments(id),
     votes(id),
     communityTitle(id).catch(() => undefined),
-    channelCached(detail.channel.id).then((p) => p.videos).catch(() => []),
+    channelCached(detail.channel.id).catch(() => null),
     playability(id).catch((): Awaited<ReturnType<typeof playability>> => ({ ok: false, code: "unplayable", reason: "Couldn't reach the streaming service." })),
   ]);
   // Up next: this channel's uploads, then related videos only from channels the user follows.
   // YouTube's recommendations for anything else are dropped.
   const followed = followedChannels(c.get("user").id);
   const seen = new Set([id]);
-  const next = [...fromChannel, ...detail.next.filter((v) => followed.has(v.channelId))].filter((v) => !seen.has(v.id) && seen.add(v.id)).slice(0, 20);
+  // YouTube sometimes omits the watch page's owner block; fill gaps from the channel page.
+  const page = fromChannel?.channel;
+  const channel = {
+    ...detail.channel,
+    avatar: detail.channel.avatar || page?.avatar,
+    subscribers: detail.channel.subscribers || page?.subscribers,
+    verified: detail.channel.verified || page?.verified,
+  };
+  const next = [...(fromChannel?.videos ?? []), ...detail.next.filter((v) => followed.has(v.channelId))].filter((v) => !seen.has(v.id) && seen.add(v.id)).slice(0, 20);
   const body: VideoDetail = {
     ...detail,
+    channel,
     next,
-    video: { ...detail.video, segments: segs, likes: vote?.likes ?? detail.video.likes, dislikes: vote?.dislikes, altTitle: alt },
+    video: { ...detail.video, channelAvatar: detail.video.channelAvatar || channel.avatar, channelVerified: channel.verified, segments: segs, likes: vote?.likes ?? detail.video.likes, dislikes: vote?.dislikes, altTitle: alt },
     stream: detail.video.live
       ? { unavailable: { code: "live", reason: "Live streams can't be played here yet." } }
       : play.ok
@@ -132,6 +145,29 @@ contentRoutes.get("/videos/:id/comments", async (c) => {
 
 contentRoutes.get("/comments/replies", async (c) => c.json(await upstream("replies", () => replies(c.req.query("token") ?? ""))));
 
+// Channel handles and custom URLs (/@name, /c/name, /user/name) → channel id.
+const resolved = new SharedCache<{ channelId: string } | null>("resolve");
+const youtubeHost = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/;
+
+contentRoutes.get("/resolve", async (c) => {
+  let url: URL;
+  try {
+    url = new URL(c.req.query("url") ?? "");
+  } catch {
+    throw fail(400, "Not a link.");
+  }
+  if (url.protocol !== "https:" || !youtubeHost.test(url.hostname)) throw fail(400, "Not a YouTube link.");
+  const result = await resolved.get(url.pathname.toLowerCase(), async () => {
+    const endpoint: { payload?: { browseId?: string } } | undefined = await (await yt())
+      .resolveURL(`https://www.youtube.com${url.pathname}`)
+      .catch(() => undefined);
+    const id = endpoint?.payload?.browseId;
+    return id && /^UC[\w-]{22}$/.test(id) ? { channelId: id } : null;
+  });
+  if (!result) throw fail(404, "No channel found for that link.", "not_found");
+  return c.json(result);
+});
+
 contentRoutes.get("/channels/:id", async (c) => c.json(await upstream("this channel", () => channelCached(channelId(c.req.param("id"))))));
 
 contentRoutes.get("/search", async (c) => {
@@ -144,7 +180,8 @@ contentRoutes.get("/search", async (c) => {
     uploaded: pick(c.req.query("uploaded"), ["any", "today", "week", "month"], "any"),
     sort: pick(c.req.query("sort"), ["relevance", "date", "views"], "relevance"),
   };
-  return c.json(await upstream("search results", () => search(q, filters)));
+  const key = `${q.toLowerCase()}|${filters.type}|${filters.duration}|${filters.uploaded}|${filters.sort}`;
+  return c.json(await upstream("search results", () => searches.get(key, () => search(q, filters))));
 });
 
 /** Several videos by id (Watch later, history). Detail is cached, so this is cheap after first view. */

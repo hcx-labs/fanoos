@@ -217,6 +217,15 @@ export const actions = {
       return { ...s, progress };
     });
   },
+  /** Drop a video's saved position (removes it from "Continue watching"). */
+  forgetProgress(id?: string) {
+    set((s) => {
+      if (!id) return { ...s, progress: {} };
+      const progress = { ...s.progress };
+      delete progress[id];
+      return { ...s, progress };
+    });
+  },
   /** Reset history, positions, searches, Watch later and preferences for the account. */
   reset() {
     set(() => defaults);

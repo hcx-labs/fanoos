@@ -105,9 +105,16 @@ export const accountActions = {
       () => api(`/backends/${id}`, { method: "PATCH", body: { label } }),
     );
   },
-  /** Start Google sign-in for a new (or re-linked) account. Leaves the page. */
-  link(backendId: string, returnTo: "home" | "settings" = "settings") {
-    window.location.assign(`/api/links/google/start?backend=${encodeURIComponent(backendId)}&return=${returnTo}`);
+  /**
+   * Start Google sign-in for a new or re-linked account. Leaves the page.
+   * `write` also asks for permission to subscribe, rate and comment; `accountId`
+   * upgrades that existing account (Google pre-selects it).
+   */
+  link(backendId: string, returnTo: "home" | "settings" = "settings", opts: { write?: boolean; accountId?: string } = {}) {
+    const params = new URLSearchParams({ backend: backendId, return: returnTo });
+    if (opts.write) params.set("write", "1");
+    if (opts.accountId) params.set("account", opts.accountId);
+    window.location.assign(`/api/links/google/start?${params}`);
   },
 };
 
@@ -150,3 +157,8 @@ export const authActions = {
     emit({ status: "signed-out" });
   },
 };
+
+/** How this server signs people in. With OIDC on, it's the only way. */
+export type AuthConfig = { oidc: { name: string } | null };
+let authConfig: Promise<AuthConfig> | null = null;
+export const getAuthConfig = () => (authConfig ??= api<AuthConfig>("/auth/config").catch(() => ({ oidc: null })));

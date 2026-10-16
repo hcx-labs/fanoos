@@ -41,6 +41,8 @@ export type PlayerHandle = { seek: (time: number) => void; play: () => void };
 type Props = {
   video: Video;
   stream: Stream;
+  /** Start here (seconds), e.g. from a shared link's t= parameter; overrides the saved position. */
+  startAt?: number;
   next?: Video;
   theater: boolean;
   onTheaterChange: (theater: boolean) => void;
@@ -76,7 +78,7 @@ async function codecPreference(): Promise<RegExp[]> {
 }
 type Notice = { segment: Segment; id: number };
 
-export function Player({ video, stream, next, theater, onTheaterChange, onTime, ref }: Props) {
+export function Player({ video, stream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
@@ -84,7 +86,7 @@ export function Player({ video, stream, next, theater, onTheaterChange, onTime, 
   const ambient = useRef<HTMLCanvasElement>(null);
   const dash = useRef<MediaPlayerClass | null>(null);
   // Read once: where playback last stopped (saved to the account).
-  const [resumeAt] = useState(() => getLocalState().progress[video.id] ?? 0);
+  const [resumeAt] = useState(() => startAt ?? getLocalState().progress[video.id] ?? 0);
   const [heights, setHeights] = useState<number[]>([]);
   const [playingHeight, setPlayingHeight] = useState<number | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -528,7 +530,7 @@ export function Player({ video, stream, next, theater, onTheaterChange, onTime, 
             </span>
             {resumeAt ? (
               <span className="absolute bottom-24 rounded-full bg-black/60 px-3 py-1 text-xs backdrop-blur">
-                Resuming at {formatDuration(resumeAt)}
+                {startAt ? "Starting at" : "Resuming at"} {formatDuration(resumeAt)}
               </span>
             ) : null}
           </button>
@@ -554,7 +556,7 @@ export function Player({ video, stream, next, theater, onTheaterChange, onTime, 
         {notice && (
           <div
             key={notice.id}
-            className="animate-in slide-in-from-left-4 fade-in absolute top-4 left-4 flex items-center gap-3 rounded-xl bg-black/75 py-2 pr-2 pl-3 text-sm shadow-lg backdrop-blur"
+            className="animate-in slide-in-from-left-4 fade-in absolute top-4 left-4 z-20 flex items-center gap-3 rounded-xl bg-black/75 py-2 pr-2 pl-3 text-sm shadow-lg backdrop-blur"
           >
             <span className="size-2.5 rounded-full" style={{ background: segmentMeta[notice.segment.category].color }} />
             <span>
@@ -580,7 +582,7 @@ export function Player({ video, stream, next, theater, onTheaterChange, onTime, 
           <button
             type="button"
             onClick={() => seek(inShowSegment.end)}
-            className="animate-in fade-in slide-in-from-right-4 absolute right-4 bottom-24 flex items-center gap-2 rounded-xl border border-white/20 bg-black/70 px-4 py-2.5 text-sm font-semibold backdrop-blur hover:bg-black/85"
+            className="animate-in fade-in slide-in-from-right-4 absolute right-4 bottom-28 z-20 flex items-center gap-2 rounded-xl border border-white/20 bg-black/70 px-4 py-2.5 text-sm font-semibold backdrop-blur hover:bg-black/85"
           >
             Skip {segmentMeta[inShowSegment.category].label.toLowerCase()}
             <SkipForward className="size-4" />

@@ -56,6 +56,8 @@ export type LinkedAccount = {
   inFeed: boolean;
   /** Set when the token was revoked or expired and the account must be linked again. */
   needsRelink?: boolean;
+  /** Granted permission to subscribe, rate and comment (youtube.force-ssl). */
+  canWrite: boolean;
 };
 
 /** Everything the app needs at startup. */
@@ -102,12 +104,16 @@ export type Video = Via & {
   /** Seconds; 0 when unknown (e.g. upcoming or live). */
   duration: number;
   views: number;
+  /** True when YouTube only gave a rounded figure ("13M"); show it rounded, not as fake precision. */
+  viewsApprox?: boolean;
   /** ISO timestamp. */
   published: string;
   description: string;
   thumbnail: string;
   live?: boolean;
   upcoming?: boolean;
+  /** YouTube's category, e.g. "Gaming" (feed videos). */
+  category?: string;
   /** Seconds watched, tracked on the device. */
   progress?: number;
   // Detail-only fields.
