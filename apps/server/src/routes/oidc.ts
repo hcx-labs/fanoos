@@ -87,19 +87,22 @@ oidcRoutes.get("/callback", async (c) => {
 
   try {
     const doc = await provider();
-    // client_secret_basic is the spec default; use client_secret_post only if that's all the provider supports.
+    // client_secret_basic is the spec default; prefer client_secret_post only if that's all the
+    // provider lists. Some providers accept only one in practice, so on invalid_client the
+    // other method is tried once.
     const methods = doc.token_endpoint_auth_methods_supported ?? ["client_secret_basic"];
-    const usePost = !methods.includes("client_secret_basic") && methods.includes("client_secret_post");
-    const body = new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: oidc.redirectUri, code_verifier: saved.verifier });
-    const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
-    if (usePost) {
-      body.set("client_id", oidc.clientId);
-      body.set("client_secret", oidc.clientSecret);
-    } else {
-      headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(oidc.clientId)}:${encodeURIComponent(oidc.clientSecret)}`).toString("base64")}`;
+    const preferred: AuthMethod = !methods.includes("client_secret_basic") && methods.includes("client_secret_post") ? "post" : "basic";
+    let tokenRes = await exchange(doc.token_endpoint, code, saved.verifier, preferred);
+    if (tokenRes.status === 400 || tokenRes.status === 401) {
+      const error = (await tokenRes.clone().json().catch(() => ({}))) as { error?: string };
+      if (error.error === "invalid_client") tokenRes = await exchange(doc.token_endpoint, code, saved.verifier, preferred === "basic" ? "post" : "basic");
     }
-    const tokenRes = await fetch(doc.token_endpoint, { method: "POST", headers, body, signal: AbortSignal.timeout(10_000) });
-    if (!tokenRes.ok) throw new Error(`token endpoint ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 200)}`);
+    if (!tokenRes.ok) {
+      throw new Error(
+        `token endpoint ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 200)} ` +
+          `(sent client id of ${oidc.clientId.length} characters and ${oidc.clientSecret ? `a secret of ${oidc.clientSecret.length} characters` : "NO secret: OIDC_CLIENT_SECRET is empty"}; tried both client_secret_basic and client_secret_post)`,
+      );
+    }
     const tokens = (await tokenRes.json()) as { id_token?: string; access_token?: string };
     if (!tokens.id_token) throw new Error("no id_token in token response");
 
@@ -127,6 +130,21 @@ oidcRoutes.get("/callback", async (c) => {
     return failed("provider");
   }
 });
+
+type AuthMethod = "basic" | "post";
+
+/** Swap the authorization code for tokens, authenticating the client the given way. */
+function exchange(endpoint: string, code: string, verifier: string, method: AuthMethod) {
+  const body = new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: oidc.redirectUri, code_verifier: verifier });
+  const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
+  if (method === "post") {
+    body.set("client_id", oidc.clientId);
+    body.set("client_secret", oidc.clientSecret);
+  } else {
+    headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(oidc.clientId)}:${encodeURIComponent(oidc.clientSecret)}`).toString("base64")}`;
+  }
+  return fetch(endpoint, { method: "POST", headers, body, signal: AbortSignal.timeout(10_000) });
+}
 
 /** Find the user for this identity, link a verified-email match, or create one. Null if the email belongs to someone else. */
 function resolveUser(

@@ -53,4 +53,8 @@ serve({ fetch, port: config.port, hostname: config.host }, ({ port }) => {
   console.log(`Backends: ${config.backends.map((b) => `${b.slug} (${b.url})`).join(", ") || "none"}`);
   if (!config.backendToken) console.warn("BACKEND_TOKEN isn't set: backends will refuse every request.");
   if (config.oidc.enabled) console.log(`Sign-in: OIDC only (${config.oidc.name}, ${config.oidc.issuer}); password and passkey sign-in are disabled.`);
+  if (config.oidc.enabled && (!config.oidc.clientId || !config.oidc.clientSecret)) {
+    console.warn(`OIDC_ISSUER is set but OIDC_CLIENT_${config.oidc.clientId ? "SECRET" : "ID"} is empty: sign-in will fail at the provider.`);
+  }
+  if (config.oidc.enabled) console.log(`OIDC redirect URI to register with the provider: ${config.oidc.redirectUri}`);
 });
