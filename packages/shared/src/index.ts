@@ -200,7 +200,8 @@ export type Stream = {
   /** A single progressive file, when the service offers one. */
   progressive?: string;
   /** Set when the video can't be played here, with the reason. */
-  unavailable?: { code: "age_restricted" | "live" | "unplayable"; reason: string };
+  /** `starting`: the service is warming up (e.g. after a restart); worth retrying in a few seconds. */
+  unavailable?: { code: "age_restricted" | "live" | "unplayable" | "starting"; reason: string };
 };
 
 export type VideoDetail = { video: Video; channel: Channel; next: Video[]; stream: Stream };

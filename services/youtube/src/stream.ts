@@ -17,7 +17,7 @@ import { signedInReady, signedInUrl } from "./signed-in.ts";
 
 export type Playability =
   | { ok: true; instance: CompanionInstance }
-  | { ok: false; code: "age_restricted" | "unplayable"; reason: string };
+  | { ok: false; code: "age_restricted" | "unplayable" | "starting"; reason: string };
 
 const { companion } = config;
 const baseOf = (instance: CompanionInstance) => (instance === "s" ? signedInUrl : companion.url);
@@ -54,8 +54,12 @@ export function playability(id: string): Promise<Playability> {
       queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "age_restricted", reason: anon.reason ?? "Age-restricted." };
     }
-    // Reported while the companion generates its first token; don't cache that.
-    if (/token|not ready/i.test(anon.reason ?? "")) queueMicrotask(() => void playabilityCache.delete(id));
+    // Reported while the companion generates its first anti-bot token (after a restart). It
+    // passes on its own, so say so plainly, don't cache it, and let the app retry.
+    if (/token|not ready|starting/i.test(anon.reason ?? "")) {
+      queueMicrotask(() => void playabilityCache.delete(id));
+      return { ok: false, code: "starting", reason: "The streaming service is starting up. This usually takes under a minute." };
+    }
     return { ok: false, code: "unplayable", reason: anon.reason ?? "This video can't be played." };
   });
 }

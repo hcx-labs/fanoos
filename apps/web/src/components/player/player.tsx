@@ -664,6 +664,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                   ? "This video couldn't be played"
                   : {
                       age_restricted: `Age-restricted on ${service}`,
+                      starting: "Getting ready to stream",
                       live: "Live streams aren't supported yet",
                       unplayable: "This video can't be played here",
                     }[stream.unavailable?.code ?? "unplayable"]}
@@ -674,6 +675,12 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     ? `${service} only streams this video to signed-in, age-verified accounts, so it has to be watched on ${service}.`
                     : (stream.unavailable?.reason ?? `${service} didn't offer a stream for this video.`))}
               </p>
+              {!failure && stream.unavailable?.code === "starting" && (
+                <p className="flex items-center justify-center gap-2 text-xs text-white/60" aria-live="polite">
+                  <span className="border-t-brand size-3.5 animate-spin rounded-full border-2 border-white/20" />
+                  It'll start on its own as soon as the stream is ready.
+                </p>
+              )}
               <div className="flex flex-wrap justify-center gap-2">
                 {!failure && stream.unavailable?.code === "age_restricted" && owner && (
                   <Link to="/settings#age-restricted" className="bg-brand text-brand-foreground rounded-lg px-3 py-1.5 text-sm font-medium hover:opacity-90">

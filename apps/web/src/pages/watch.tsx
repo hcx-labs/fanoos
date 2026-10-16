@@ -50,7 +50,9 @@ export function WatchPage() {
   const startAt = Number(params.get("t")) || undefined;
   const source = useSource();
   const { can } = useAccounts();
-  const state = useData(() => source.video({ backend, id }), [source.key, backend, id]);
+  // Bumped to load the video again (e.g. while the streaming service warms up).
+  const [attempt, setAttempt] = useState(0);
+  const state = useData(() => source.video({ backend, id }), [source.key, backend, id, attempt]);
   const { dearrow } = useSettings();
   const loaded = state.data?.video;
   useTitle(loaded ? (dearrow && loaded.altTitle ? loaded.altTitle : loaded.title) : state.status === "loading" ? null : "Video unavailable");
@@ -61,8 +63,16 @@ export function WatchPage() {
   // Keep the page as it is while that loads, so only the stream changes.
   const shown = useRef<VideoDetail | null>(null);
   if (state.data) shown.current = state.data;
-  const sameEpisode = shown.current?.video.backend === backend && shown.current.video.episode?.versions?.some((v) => v.id === id);
+  const sameEpisode =
+    shown.current?.video.backend === backend && (shown.current.video.id === id || shown.current.video.episode?.versions?.some((v) => v.id === id));
   const detail = state.data ?? (state.status === "loading" && sameEpisode ? shown.current : null);
+  // The streaming service is warming up: check again shortly, without leaving the page.
+  const starting = detail?.stream.unavailable?.code === "starting";
+  useEffect(() => {
+    if (!starting) return;
+    const timer = window.setTimeout(() => setAttempt((n) => n + 1), 6000);
+    return () => window.clearTimeout(timer);
+  }, [starting, attempt]);
 
   if (!detail && state.status === "loading") return <WatchSkeleton />;
   if (!detail)
