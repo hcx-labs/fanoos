@@ -104,6 +104,8 @@ services:
     restart: unless-stopped
     environment:
       WARP_SLEEP: "2"
+      # Optional WARP+ licence key; without one a free WARP account is registered on first start.
+      WARP_LICENSE_KEY: ${WARP_LICENSE_KEY:-}
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun:/dev/net/tun]
     sysctls:
