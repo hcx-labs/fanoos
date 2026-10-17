@@ -201,7 +201,8 @@ export type Stream = {
   progressive?: string;
   /** Set when the video can't be played here, with the reason. */
   /** `starting`: the service is warming up (e.g. after a restart); worth retrying in a few seconds. */
-  unavailable?: { code: "age_restricted" | "live" | "unplayable" | "starting"; reason: string };
+  /** `bot_check`: YouTube wants this server to sign in ("confirm you're not a bot"). */
+  unavailable?: { code: "age_restricted" | "live" | "unplayable" | "starting" | "bot_check"; reason: string };
 };
 
 export type VideoDetail = { video: Video; channel: Channel; next: Video[]; stream: Stream };

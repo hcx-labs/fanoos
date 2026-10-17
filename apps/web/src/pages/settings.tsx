@@ -23,7 +23,7 @@ const sections = [
   { id: "appearance", label: "Appearance" },
   { id: "privacy", label: "Privacy" },
   { id: "segments", label: "Sponsor skipping" },
-  { id: "age-restricted", label: "Age-restricted", ownerOnly: true },
+  { id: "age-restricted", label: "Signed-in playback", ownerOnly: true },
   { id: "playback", label: "Playback" },
   { id: "feed", label: "Feed & titles" },
   { id: "shortcuts", label: "Shortcuts" },
@@ -208,8 +208,8 @@ export function SettingsPage() {
         {profile?.owner && (
           <Group
             id="age-restricted"
-            title="Age-restricted videos"
-            description="A server-wide setting, shown only to the server's owner."
+            title="Signed-in playback"
+            description="A secondary Google account the server uses only for videos YouTube won't stream signed out. Server-wide, shown only to the server's owner."
           >
             <AgeRestrictedSetup />
           </Group>

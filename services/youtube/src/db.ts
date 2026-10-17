@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   synced_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS subscriptions (
   account_ref TEXT NOT NULL REFERENCES accounts(ref) ON DELETE CASCADE,
   channel_id TEXT NOT NULL,

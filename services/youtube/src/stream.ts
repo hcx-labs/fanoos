@@ -13,11 +13,12 @@
 import { SharedCache } from "./cache.ts";
 import { config } from "./config.ts";
 import { type CompanionInstance, proxyCompanion } from "./media.ts";
+import { getSettings } from "./settings.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
 
 export type Playability =
   | { ok: true; instance: CompanionInstance }
-  | { ok: false; code: "age_restricted" | "unplayable" | "starting"; reason: string };
+  | { ok: false; code: "age_restricted" | "unplayable" | "starting" | "bot_check"; reason: string };
 
 const { companion } = config;
 const baseOf = (instance: CompanionInstance) => (instance === "s" ? signedInUrl : companion.url);
@@ -37,6 +38,8 @@ async function playerStatus(instance: CompanionInstance, id: string): Promise<St
 }
 
 const isAgeGate = (s: Status) => s.status === "LOGIN_REQUIRED" && /age|inappropriate/i.test(s.reason ?? "");
+/** "Sign in to confirm you're not a bot": YouTube distrusts this server's address. */
+const isBotCheck = (s: Status) => /not a bot|confirm you/i.test(s.reason ?? "");
 
 const playabilityCache = new SharedCache<Playability>("playability", { staleSeconds: 3600 });
 
@@ -53,6 +56,16 @@ export function playability(id: string): Promise<Playability> {
       // Not cached: once age-restricted playback is set up, the next attempt should use it.
       queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "age_restricted", reason: anon.reason ?? "Age-restricted." };
+    }
+    if (isBotCheck(anon)) {
+      // The owner can let the signed-in instance take these videos (Settings → Signed-in playback).
+      if (getSettings().botCheckFallback && signedInReady()) {
+        const signed = await playerStatus("s", id);
+        if (signed?.status === "OK") return { ok: true, instance: "s" };
+      }
+      // Not cached: the address may be trusted again soon, or the fallback switched on.
+      queueMicrotask(() => void playabilityCache.delete(id));
+      return { ok: false, code: "bot_check", reason: "YouTube asked this server to sign in to confirm it isn't a bot." };
     }
     // Reported while the companion generates its first anti-bot token (after a restart). It
     // passes on its own, so say so plainly, don't cache it, and let the app retry.

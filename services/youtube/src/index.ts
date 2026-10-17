@@ -44,6 +44,7 @@ import {
 } from "./google.ts";
 import { channelPage, comments, replies, search, videoDetail, yt } from "./innertube.ts";
 import { mediaRoutes, proxyImage } from "./media.ts";
+import { getSettings, setSetting } from "./settings.ts";
 import { resumeSignedIn, signedInState, signOutSignedIn, startSignedIn } from "./signed-in.ts";
 import { dashManifest, playability } from "./stream.ts";
 
@@ -447,6 +448,12 @@ v1.post("/actions/progress", (c) => c.json({ ok: true }));
 // Owner settings: signed-in playback for age-restricted videos
 
 v1.get("/admin/age-restricted", (c) => c.json(signedInState()));
+v1.get("/admin/age-restricted/settings", (c) => c.json(getSettings()));
+v1.put("/admin/age-restricted/settings", async (c) => {
+  const body = await c.req.json<{ botCheckFallback?: unknown }>();
+  if (typeof body.botCheckFallback === "boolean") setSetting("botCheckFallback", body.botCheckFallback);
+  return c.json(getSettings());
+});
 v1.post("/admin/age-restricted/start", async (c) => c.json(await startSignedIn()));
 v1.post("/admin/age-restricted/sign-out", (c) => {
   signOutSignedIn();

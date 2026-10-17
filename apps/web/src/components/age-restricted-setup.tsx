@@ -2,17 +2,32 @@ import { useEffect, useState } from "react";
 import { Check, Copy, ExternalLink, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
 import type { AgeRestrictedSetup as State } from "@/lib/types";
 
 /**
- * Server-wide signed-in playback for age-restricted videos (owner only). The server
- * starts a second streaming service and Google's device sign-in hands us a code;
- * everything else keeps streaming signed out.
+ * Server-wide signed-in playback (owner only): a second streaming service signed in to a
+ * secondary Google account, used for age-restricted videos and, if the owner allows, videos
+ * YouTube blocks with its bot check. Everything else keeps streaming signed out.
  */
 export function AgeRestrictedSetup() {
   const [state, setState] = useState<State | null>(null);
+  const [fallback, setFallback] = useState<boolean | null>(null);
+  useEffect(() => {
+    api<{ botCheckFallback: boolean }>("/admin/b/youtube/age-restricted/settings").then((s) => setFallback(s.botCheckFallback), () => {});
+  }, []);
+  const saveFallback = async (on: boolean) => {
+    setFallback(on);
+    try {
+      setFallback((await api<{ botCheckFallback: boolean }>("/admin/b/youtube/age-restricted/settings", { method: "PUT", body: { botCheckFallback: on } })).botCheckFallback);
+    } catch (e) {
+      setFallback(!on);
+      toast.error("Couldn't save that", { description: (e as Error).message });
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -44,6 +59,7 @@ export function AgeRestrictedSetup() {
 
   if (!state) return <div className="p-4"><Spinner className="text-muted-foreground" /></div>;
 
+  const signedIn = state.status === "ready";
   return (
     <div className="space-y-4 p-4">
       {state.status === "off" && (
@@ -143,6 +159,19 @@ export function AgeRestrictedSetup() {
             <LogOut /> Sign out
           </Button>
         </div>
+      )}
+
+      {fallback !== null && (
+        <Label htmlFor="bot-fallback" className="hover:bg-muted/60 flex items-start gap-3 rounded-xl border p-3 font-normal">
+          <Switch id="bot-fallback" className="mt-0.5" checked={fallback} onCheckedChange={(on) => void saveFallback(on)} />
+          <span>
+            <span className="block text-sm font-medium">Also when YouTube asks to confirm you're not a bot</span>
+            <span className="text-muted-foreground block text-xs">
+              If YouTube distrusts this server's address, play those videos through the signed-in account too. Everything else stays signed out.
+              {!signedIn && " Needs the account above to be signed in."}
+            </span>
+          </span>
+        </Label>
       )}
 
       {state.status === "error" && (
