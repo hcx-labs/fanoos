@@ -67,7 +67,8 @@ export function WatchPage() {
     shown.current?.video.backend === backend && (shown.current.video.id === id || shown.current.video.episode?.versions?.some((v) => v.id === id));
   const detail = state.data ?? (state.status === "loading" && sameEpisode ? shown.current : null);
   // The streaming service is warming up: check again shortly, without leaving the page.
-  const starting = detail?.stream.unavailable?.code === "starting";
+  // About two minutes of retries; past that it isn't warming up any more, so stop and say so.
+  const starting = detail?.stream.unavailable?.code === "starting" && attempt < 20;
   useEffect(() => {
     if (!starting) return;
     const timer = window.setTimeout(() => setAttempt((n) => n + 1), 6000);
@@ -88,7 +89,17 @@ export function WatchPage() {
       </Empty>
     );
 
-  const { video, channel, next, stream } = detail;
+  const { video, channel, next } = detail;
+  const stream =
+    detail.stream.unavailable?.code === "starting" && !starting
+      ? {
+          ...detail.stream,
+          unavailable: {
+            code: "bot_check" as const,
+            reason: "The streaming service still has no token from YouTube. YouTube may be refusing this server's address.",
+          },
+        }
+      : detail.stream;
   const seek = (t: number) => {
     player.current?.seek(t);
     player.current?.play();

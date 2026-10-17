@@ -57,19 +57,25 @@ export function playability(id: string): Promise<Playability> {
       queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "age_restricted", reason: anon.reason ?? "Age-restricted." };
     }
-    if (isBotCheck(anon)) {
-      // The owner can let the signed-in instance take these videos (Settings → Signed-in playback).
-      if (getSettings().botCheckFallback && signedInReady()) {
-        const signed = await playerStatus("s", id);
-        if (signed?.status === "OK") return { ok: true, instance: "s" };
+    // No anti-bot token yet (warming up, or YouTube keeps refusing this address) and the bot check
+    // itself have the same cause; with the owner's fallback on, the signed-in instance takes over.
+    const noToken = /token|not ready|starting/i.test(anon.reason ?? "");
+    if ((isBotCheck(anon) || noToken) && getSettings().botCheckFallback && signedInReady()) {
+      const signed = await playerStatus("s", id);
+      if (signed?.status === "OK") {
+        // A short-lived answer: the anonymous instance may have its token in a minute.
+        queueMicrotask(() => void playabilityCache.delete(id));
+        return { ok: true, instance: "s" };
       }
+    }
+    if (isBotCheck(anon)) {
       // Not cached: the address may be trusted again soon, or the fallback switched on.
       queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "bot_check", reason: "YouTube asked this server to sign in to confirm it isn't a bot." };
     }
     // Reported while the companion generates its first anti-bot token (after a restart). It
     // passes on its own, so say so plainly, don't cache it, and let the app retry.
-    if (/token|not ready|starting/i.test(anon.reason ?? "")) {
+    if (noToken) {
       queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "starting", reason: "The streaming service is starting up. This usually takes under a minute." };
     }
