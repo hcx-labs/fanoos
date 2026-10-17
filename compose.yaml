@@ -68,7 +68,7 @@ services:
       SERVER_SECRET_KEY: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
       HOST: 0.0.0.0
       PORT: "8282"
-      # Send YouTube traffic through a proxy, e.g. the warp service below: socks5://warp:1080
+      # Send YouTube traffic through a proxy, e.g. the warp service below: http://warp:1080
       PROXY: ${COMPANION_PROXY:-}
     # If YouTube refuses this server's address (common on VPS IPs: `docker compose logs companion`
     # shows "Failed to validate PO token"), resolve YouTube through a DNS-based proxy instead:
@@ -102,7 +102,7 @@ services:
 
   # Optional: Cloudflare WARP as a proxy, for servers whose address YouTube refuses (companion log:
   # "Failed to validate PO token"). Start it and point the companions at it:
-  #   COMPANION_PROXY=socks5://warp:1080   (in .env)
+  #   COMPANION_PROXY=http://warp:1080   (in .env; HTTP, so WARP resolves YouTube's hosts itself)
   #   docker compose --profile warp up -d
   # Only reachable inside this network. See https://blog.caomingjun.com/run-cloudflare-warp-in-docker/en/
   warp:
@@ -116,7 +116,9 @@ services:
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun:/dev/net/tun]
     sysctls:
-      net.ipv6.conf.all.disable_ipv6: 0
+      # IPv4 only: YouTube ties each stream URL to the address that asked for it, and WARP would
+      # otherwise mix IPv4 and IPv6 exits, so segment downloads fail (TLS close_notify / 500).
+      net.ipv6.conf.all.disable_ipv6: 1
       net.ipv4.conf.all.src_valid_mark: 1
     volumes: [warp-data:/var/lib/cloudflare-warp]
 
