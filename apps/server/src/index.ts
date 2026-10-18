@@ -13,6 +13,7 @@ import { authRoutes } from "./routes/auth.ts";
 import { oidcRoutes } from "./routes/oidc.ts";
 import { contentRoutes } from "./routes/content.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
+import { statsRoutes } from "./routes/stats.ts";
 
 const app = new Hono<AppEnv>().basePath("/api");
 
@@ -29,6 +30,7 @@ app.route("/auth", authRoutes);
 app.route("/b", proxyRoutes);
 app.route("/admin", adminRoutes);
 app.route("/me/data", dataRoutes);
+app.route("/me", statsRoutes);
 app.route("/", accountRoutes);
 app.route("/", contentRoutes);
 

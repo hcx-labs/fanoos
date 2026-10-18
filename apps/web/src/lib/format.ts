@@ -20,6 +20,17 @@ export function formatDuration(totalSeconds: number) {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
+/** Time spent, for Analytics: "45s", "12m", "3h 05m", "41h". */
+export function formatWatchTime(totalSeconds: number) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h >= 24 || !m ? `${h}h` : `${h}h ${String(m).padStart(2, "0")}m`;
+}
+
 const units: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 31536000],
   ["month", 2592000],

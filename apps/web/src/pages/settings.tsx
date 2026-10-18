@@ -1,12 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Ban, Eye, Fingerprint, Gauge, ShieldCheck, Sparkles, Trash2, Tv, Volume2, FastForward } from "lucide-react";
+import { Ban, ChartColumn, Eye, Fingerprint, Gauge, ShieldCheck, Sparkles, Trash2, Tv, Volume2, FastForward } from "lucide-react";
 import { toast } from "sonner";
 import { AccountsManager } from "@/components/accounts/accounts-manager";
 import { AgeRestrictedSetup } from "@/components/age-restricted-setup";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { api } from "@/lib/api";
 import { Kbd } from "@/components/ui/kbd";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -173,6 +175,9 @@ export function SettingsPage() {
               Erase
             </Button>
           </Row>
+          <Row icon={ChartColumn} title="Erase watch analytics" description="Deletes every minute of watch time behind Analytics, for all time. Kept separately from history, so nothing above touches it.">
+            <EraseAnalytics />
+          </Row>
         </Group>
 
         <Group
@@ -338,5 +343,51 @@ function Row({
       </div>
       <div className="shrink-0">{children}</div>
     </div>
+  );
+}
+
+function EraseAnalytics() {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="destructive" size="sm">
+          Erase
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Erase all watch analytics?</DialogTitle>
+          <DialogDescription>
+            This permanently deletes all recorded watch time: totals, streaks, top channels and shows, and every recap, for all time.
+            It can't be undone, and Analytics starts again from zero. Your history, Watch later and playback positions are kept.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">Cancel</Button>
+          </DialogClose>
+          <Button
+            variant="destructive"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api("/me/stats", { method: "DELETE" });
+                toast.success("Watch analytics erased");
+                setOpen(false);
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Couldn't erase watch analytics");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Erase everything
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

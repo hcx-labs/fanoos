@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router";
 import {
+  ChartColumn,
   Check,
   ChevronRight,
   EyeOff,
@@ -50,6 +51,7 @@ export const nav = [
   { to: "/", label: "Home", icon: House, end: true },
   { to: "/following", label: "Following", icon: UsersRound },
   { to: "/library", label: "Library", icon: LibraryBig },
+  { to: "/analytics", label: "Analytics", icon: ChartColumn },
 ];
 
 export function useSearchShortcut() {

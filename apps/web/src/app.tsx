@@ -5,6 +5,7 @@ import { HomePage } from "@/pages/home";
 import { LibraryPage } from "@/pages/library";
 import { SearchPage } from "@/pages/search";
 import { SettingsPage } from "@/pages/settings";
+import { AnalyticsPage } from "@/pages/analytics";
 import { SubscriptionsPage } from "@/pages/subscriptions";
 import { WatchPage } from "@/pages/watch";
 import { WelcomePage } from "@/pages/welcome";
@@ -50,6 +51,7 @@ export function App() {
         <Route path="/following" element={<SubscriptionsPage />} />
         <Route path="/subscriptions" element={<Navigate to="/following" replace />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -42,6 +42,7 @@ import { useSource } from "@/lib/source";
 import { actions, getLocalState, useSettings, useStore, type Settings } from "@/lib/store";
 import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { createWatchMeter, type WatchMeter } from "@/lib/watch-meter";
 
 export type PlayerHandle = { seek: (time: number) => void; play: () => void };
 
@@ -175,6 +176,19 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const [failure, setFailure] = useState<string | null>(null);
   const lastSaved = useRef(0);
   const lastReported = useRef(0);
+  // Watch time for Analytics, one meter per item; whatever is left is sent when leaving it.
+  const meter = useRef<WatchMeter | null>(null);
+  useEffect(() => {
+    const m = createWatchMeter(video);
+    meter.current = m;
+    const close = () => m.close();
+    addEventListener("pagehide", close);
+    return () => {
+      removeEventListener("pagehide", close);
+      m.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
@@ -404,6 +418,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       if (current < segment.start || current >= segment.end) continue;
       const action = settings.segments[segment.category];
       if (action === "skip" && !allowed.current.has(segment) && playing && !scrubbing) {
+        meter.current?.skipped(current, segment.end);
         seek(segment.end);
         setNotice({ segment, id: Date.now() });
       }
@@ -618,15 +633,18 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           }}
           onPause={(e) => {
             setPlaying(false);
+            meter.current?.pause();
             actions.saveProgress(key, e.currentTarget.currentTime, e.currentTarget.duration);
             if (tracksProgress) void source.progress(video, e.currentTarget.currentTime);
           }}
+          onSeeking={() => meter.current?.jump()}
           onWaiting={() => setWaiting(true)}
           onPlaying={() => setWaiting(false)}
           onCanPlay={() => setWaiting(false)}
           onEnded={(e) => {
             setEnded(true);
             setPlaying(false);
+            meter.current?.finish();
             actions.saveProgress(key, 0, 0);
             if (tracksProgress) void source.progress(video, e.currentTarget.duration);
           }}
@@ -634,6 +652,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           onTimeUpdate={(e) => {
             const t = e.currentTarget.currentTime;
             setCurrent(t);
+            if (!e.currentTarget.paused) meter.current?.tick(t, e.currentTarget.playbackRate, e.currentTarget.duration);
             onTime?.(t);
             // Save the position every few seconds for resuming and "Continue watching".
             if (Math.abs(t - lastSaved.current) > 5) {

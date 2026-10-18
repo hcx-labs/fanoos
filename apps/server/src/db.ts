@@ -83,6 +83,35 @@ CREATE TABLE IF NOT EXISTS channel_groups (
   grp TEXT NOT NULL,
   PRIMARY KEY (user_id, channel_id)
 );
+-- Watch time, for Analytics. One row per item watched, and its time split by the viewer's local
+-- day and hour (seconds of real time, of the video itself, and skipped segments).
+CREATE TABLE IF NOT EXISTS watch_items (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  channel_key TEXT NOT NULL,
+  channel_name TEXT NOT NULL,
+  category TEXT,
+  thumbnail TEXT,
+  duration INTEGER NOT NULL DEFAULT 0,
+  first_at INTEGER NOT NULL,
+  last_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, item_key)
+);
+CREATE TABLE IF NOT EXISTS watch_time (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  day TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  seconds REAL NOT NULL DEFAULT 0,
+  media REAL NOT NULL DEFAULT 0,
+  skipped REAL NOT NULL DEFAULT 0,
+  finished INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, item_key, day, hour)
+);
+CREATE INDEX IF NOT EXISTS watch_time_day ON watch_time (user_id, day);
 `);
 
 // Additive migrations for databases created by earlier versions.

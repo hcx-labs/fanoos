@@ -256,3 +256,93 @@ export type SearchResults = { channels: Channel[]; videos: Video[]; next?: strin
 
 /** Error body for every non-2xx API response. */
 export type ApiError = { error: string; code?: string };
+
+/**
+ * Watch time the player reports to core, about every 30 seconds of playback and when it stops.
+ * `seconds` is real time spent watching; `media` is how much of the video played (more than
+ * `seconds` when sped up); `skipped` is segments skipped automatically.
+ */
+export type WatchBeat = {
+  /** Item key, "<backend>/<id>". */
+  key: string;
+  title: string;
+  kind: "video" | "episode";
+  channelId: string;
+  channelName: string;
+  category?: string;
+  thumbnail?: string;
+  duration: number;
+  seconds: number;
+  media: number;
+  skipped: number;
+  /** Played to the end (or within the last few percent). */
+  finished?: boolean;
+  /** The viewer's IANA time zone, so days and hours are their own. */
+  tz: string;
+};
+
+/** Totals for a period, also returned for the period before it for comparison. */
+export type WatchTotals = {
+  seconds: number;
+  media: number;
+  skipped: number;
+  items: number;
+  finished: number;
+  channels: number;
+  activeDays: number;
+};
+
+export type WatchStatsChannel = {
+  /** "<backend>:<channel id>", as in channel groups. */
+  key: string;
+  backend: string;
+  id: string;
+  name: string;
+  kind: "video" | "episode";
+  thumbnail?: string;
+  seconds: number;
+  items: number;
+  finished: number;
+  /** Average share of each item watched, 0–1. */
+  completion: number;
+  lastAt: number;
+};
+
+export type WatchStatsItem = {
+  key: string;
+  backend: string;
+  id: string;
+  title: string;
+  channelName: string;
+  thumbnail?: string;
+  duration: number;
+  seconds: number;
+  /** Video time played in the period, over its length: 2 means watched twice. */
+  plays: number;
+};
+
+export type WatchStats = {
+  /** Period length in days; 0 for all time. */
+  days: number;
+  /** First and last day of the period (the viewer's local dates, YYYY-MM-DD). */
+  from: string;
+  to: string;
+  totals: WatchTotals;
+  /** The same totals for the period just before (absent for all time). */
+  previous?: WatchTotals;
+  /** One entry per day in the period (all time: from the first day watched). */
+  daily: { day: string; seconds: number; byBackend: Record<string, number> }[];
+  /** Seconds by weekday (0 = Sunday) and hour of day. */
+  heatmap: number[][];
+  backends: { backend: string; seconds: number; items: number }[];
+  channels: WatchStatsChannel[];
+  items: WatchStatsItem[];
+  categories: { name: string; seconds: number }[];
+  /** Longest single day in the period. */
+  topDay?: { day: string; seconds: number };
+  /** Most episodes of one show finished in a single day. */
+  binge?: { day: string; name: string; key: string; episodes: number };
+  streak: { current: number; longest: number };
+  /** When tracking started (ms), for "since …". */
+  since?: number;
+};
