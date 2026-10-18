@@ -6,3 +6,4 @@ dist
 *.sqlite-*
 apps/server/data/
 services/*/data/
+ctrld/*.toml

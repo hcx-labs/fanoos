@@ -62,7 +62,16 @@ cp compose.env.example .env   # fill in BACKEND_TOKEN, COMPANION_SECRET, Google 
 docker compose up -d
 ```
 
-**Blocked by YouTube?** On many VPS and data-centre addresses, YouTube refuses the companion's anti-bot token: videos never start, and `docker compose logs companion` shows "Failed to validate PO token". Route the companions through Cloudflare WARP: set `COMPANION_PROXY=http://warp:1080` in `.env` and run `docker compose --profile warp up -d`. If video pages also lack view counts and descriptions, YouTube is limiting the backend's own requests too: add `YOUTUBE_PROXY=http://warp:1080`. Or point them at a DNS-based proxy (uncomment `dns:` on both in `compose.yaml`). See Invidious' [notes on blocked IPs](https://docs.invidious.io/youtube-errors-explained/) for more.
+**Blocked by YouTube?** On many VPS and data-centre addresses, YouTube refuses the companion's anti-bot token: videos never start, and `docker compose logs companion` shows "Failed to validate PO token". Resolve through [Control D](https://controld.com) instead: [`compose.ctrld.yaml`](compose.ctrld.yaml) adds a `ctrld` container at a fixed address, and every service uses it as its DNS server. In your Control D profile, redirect YouTube's domains (youtube.com, googlevideo.com, ytimg.com, ggpht.com, googleapis.com) to a proxy location, then:
+
+```sh
+cp ctrld/ctrld.toml.example ctrld/ctrld.toml   # put your resolver ID in it
+docker compose down                            # once: the network gets a fixed subnet
+echo 'COMPOSE_FILE=compose.yaml:compose.ctrld.yaml' >> .env
+docker compose up -d
+```
+
+To use a different DNS setup per backend (say, Crunchyroll through another Control D profile), add a second ctrld instance with its own config and address and point only that backend at it; `compose.ctrld.yaml` shows how. HTTP proxies work too: `COMPANION_PROXY` for the companions, `YOUTUBE_PROXY` for the backend's own requests. See Invidious' [notes on blocked IPs](https://docs.invidious.io/youtube-errors-explained/) for more.
 
 Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then enter the code from `docker compose logs -f companion-signed-in` at google.com/device. Settings → Age-restricted shows the same steps.
 

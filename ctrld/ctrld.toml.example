@@ -1,0 +1,14 @@
+# ctrld config for compose.ctrld.yaml. Copy to ctrld.toml (not committed) and replace RESOLVER_ID with
+# your Control D resolver ID (Control D → Endpoints → your endpoint → Resolvers, the DNS-over-HTTPS
+# address ends in it). DNS-over-HTTPS identifies the profile by that ID, so no authorised IPs needed.
+# Full options: https://github.com/Control-D-Inc/ctrld/blob/main/docs/config.md
+
+[listener.0]
+  ip = "0.0.0.0"
+  port = 53
+
+[upstream.0]
+  name = "Control D"
+  type = "doh"
+  endpoint = "https://dns.controld.com/RESOLVER_ID"
+  timeout = 5000

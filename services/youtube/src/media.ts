@@ -43,16 +43,26 @@ export const mediaRoutes = new Hono<ServiceEnv>();
 
 mediaRoutes.get("/img", async (c) => {
   const url = target("img", c.req.query("u"), c.req.query("s"), imageHosts);
-  let upstream = await fetch(url, { headers: { "user-agent": "Mozilla/5.0" } });
-  // Not every video has a 720p thumbnail; fall back to the always-present one.
+  const get = (u: URL) => fetch(u, { headers: { "user-agent": "Mozilla/5.0" } });
+  let upstream = await get(url);
+  // A missing 16:9 thumbnail (some videos, or some addresses for age-restricted ones): try the
+  // other full-size name, then 640×480, and only then the always-present 480×360 one.
+  let fallback = false;
   if (upstream.status === 404 && /\/(hq720|maxresdefault)\.jpg$/.test(url.pathname)) {
-    upstream = await fetch(new URL(url.pathname.replace(/[^/]+\.jpg$/, "hqdefault.jpg"), url), { headers: { "user-agent": "Mozilla/5.0" } });
+    for (const name of ["maxresdefault.jpg", "hq720.jpg", "sddefault.jpg", "hqdefault.jpg"]) {
+      const next = new URL(url.pathname.replace(/[^/]+\.jpg$/, name), url);
+      if (next.pathname === url.pathname) continue;
+      upstream = await get(next);
+      fallback = true;
+      if (upstream.ok) break;
+    }
   }
   if (!upstream.ok || !upstream.body) throw fail(502, "Image unavailable.");
   return new Response(upstream.body, {
     headers: {
       "content-type": upstream.headers.get("content-type") ?? "image/jpeg",
-      "cache-control": "private, max-age=86400, immutable",
+      // A stand-in is cached briefly, so the full image shows up once it's served again.
+      "cache-control": fallback ? "private, max-age=3600" : "private, max-age=86400, immutable",
     },
   });
 });

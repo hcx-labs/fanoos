@@ -1,0 +1,58 @@
+# Resolve everything through Control D, for servers whose address YouTube refuses (companion log:
+# "Failed to validate PO token"). ctrld runs as its own container with a fixed address on the stack's
+# network, and every service that reaches the internet uses it as its DNS server. Point the domains
+# you want moved at a Control D proxy location (Redirect) in your Control D profile: for YouTube,
+# redirect youtube.com, googlevideo.com, ytimg.com, ggpht.com and googleapis.com together, since
+# stream URLs only work from the address that requested them.
+#
+#   cp ctrld/ctrld.toml.example ctrld/ctrld.toml    # put your resolver ID in it
+#   docker compose down                             # once: the network gets a fixed subnet
+#   docker compose -f compose.yaml -f compose.ctrld.yaml up -d
+#
+# or set COMPOSE_FILE=compose.yaml:compose.ctrld.yaml in .env and keep running `docker compose up -d`.
+#
+# Different DNS per backend: add another ctrld instance with its own config and address, and point
+# just that backend at it. For example, Crunchyroll through a second Control D profile: add
+#
+#   ctrld-crunchyroll:
+#     <<: *ctrld
+#     volumes: [./ctrld/crunchyroll.toml:/etc/ctrld/ctrld.toml:ro]
+#     networks: { default: { ipv4_address: 172.28.53.54 } }
+#
+# and replace `crunchyroll: *uses-ctrld` below with
+#
+#   crunchyroll:
+#     dns: [172.28.53.54]
+#     depends_on: [ctrld-crunchyroll]
+#
+# Each instance needs a free address in the subnet. Services still find each other by name: Docker
+# answers those itself and forwards only everything else to ctrld.
+
+x-ctrld: &ctrld
+  image: controldns/ctrld:latest
+  restart: unless-stopped
+  command: ["--config", "/etc/ctrld/ctrld.toml"]
+
+x-uses-ctrld: &uses-ctrld
+  dns: [172.28.53.53]
+  depends_on: [ctrld]
+
+services:
+  ctrld:
+    <<: *ctrld
+    volumes: [./ctrld/ctrld.toml:/etc/ctrld/ctrld.toml:ro]
+    networks:
+      default:
+        ipv4_address: 172.28.53.53
+
+  core: *uses-ctrld
+  youtube: *uses-ctrld
+  crunchyroll: *uses-ctrld
+  companion: *uses-ctrld
+  companion-signed-in: *uses-ctrld
+
+networks:
+  default:
+    ipam:
+      # Change both the subnet and the addresses above if this clashes with a network you have.
+      config: [{ subnet: 172.28.53.0/24 }]

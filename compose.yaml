@@ -2,6 +2,7 @@
 #   cp compose.env.example .env   # fill it in
 #   docker compose up -d          # then open PUBLIC_URL
 # Only core is published; backends, the streaming companion and Redis stay on the internal network.
+# Resolving through Control D (ctrld) instead: see compose.ctrld.yaml.
 name: fanoos
 
 x-backend: &backend
@@ -37,9 +38,9 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
-      # Optional: send this backend's own YouTube requests (video pages, search, channels) through a
-      # proxy too, e.g. YOUTUBE_PROXY=http://warp:1080, when YouTube serves this server stripped-down
-      # pages (no view counts or descriptions). Node 24 picks these up; the companions stay direct.
+      # Optional: send this backend's own YouTube requests (video pages, search, channels) through an
+      # HTTP proxy, when YouTube serves this server stripped-down pages (no view counts or
+      # descriptions). Node 24 picks these up; the companions use COMPANION_PROXY.
       NODE_USE_ENV_PROXY: ${YOUTUBE_PROXY:+1}
       HTTPS_PROXY: ${YOUTUBE_PROXY:-}
       HTTP_PROXY: ${YOUTUBE_PROXY:-}
@@ -68,15 +69,8 @@ services:
       SERVER_SECRET_KEY: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
       HOST: 0.0.0.0
       PORT: "8282"
-      # Send YouTube traffic through a proxy, e.g. the warp service below: http://warp:1080
+      # Optional: send YouTube traffic through an HTTP proxy.
       PROXY: ${COMPANION_PROXY:-}
-    # If YouTube refuses this server's address (common on VPS IPs: `docker compose logs companion`
-    # shows "Failed to validate PO token"), resolve YouTube through a DNS-based proxy instead:
-    # dns: [203.0.113.1, 203.0.113.2]
-    # Most DNS proxies only rewrite IPv4; switch IPv6 off so nothing goes around them:
-    # sysctls:
-    #   net.ipv6.conf.all.disable_ipv6: 1
-    #   net.ipv6.conf.default.disable_ipv6: 1
 
   # Optional: a signed-in companion, used only for age-restricted videos. Start it with
   #   docker compose --profile age-restricted up -d companion-signed-in
@@ -94,33 +88,6 @@ services:
       CACHE_DIRECTORY: /cache
       PROXY: ${COMPANION_PROXY:-}
     volumes: [companion-signed-in:/cache]
-    # Same DNS-based proxy as the companion, if you use one:
-    # dns: [203.0.113.1, 203.0.113.2]
-    # sysctls:
-    #   net.ipv6.conf.all.disable_ipv6: 1
-    #   net.ipv6.conf.default.disable_ipv6: 1
-
-  # Optional: Cloudflare WARP as a proxy, for servers whose address YouTube refuses (companion log:
-  # "Failed to validate PO token"). Start it and point the companions at it:
-  #   COMPANION_PROXY=http://warp:1080   (in .env; HTTP, so WARP resolves YouTube's hosts itself)
-  #   docker compose --profile warp up -d
-  # Only reachable inside this network. See https://blog.caomingjun.com/run-cloudflare-warp-in-docker/en/
-  warp:
-    image: caomingjun/warp:latest
-    profiles: [warp]
-    restart: unless-stopped
-    environment:
-      WARP_SLEEP: "2"
-      # Optional WARP+ licence key; without one a free WARP account is registered on first start.
-      WARP_LICENSE_KEY: ${WARP_LICENSE_KEY:-}
-    cap_add: [NET_ADMIN]
-    devices: [/dev/net/tun:/dev/net/tun]
-    sysctls:
-      # IPv4 only: YouTube ties each stream URL to the address that asked for it, and WARP would
-      # otherwise mix IPv4 and IPv6 exits, so segment downloads fail (TLS close_notify / 500).
-      net.ipv6.conf.all.disable_ipv6: 1
-      net.ipv4.conf.all.src_valid_mark: 1
-    volumes: [warp-data:/var/lib/cloudflare-warp]
 
   redis:
     image: redis:7-alpine
@@ -128,7 +95,6 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
 
 volumes:
-  warp-data:
   companion-signed-in:
   core-data:
   youtube-data:
