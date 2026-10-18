@@ -140,7 +140,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLVideoElement>(null);
-  const ambient = useRef<HTMLCanvasElement>(null);
+  const ambient = useRef<HTMLDivElement>(null);
   const dash = useRef<MediaPlayerClass | null>(null);
   const key = itemKey(video);
   const navigate = useNavigate();
@@ -440,22 +440,51 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     return () => window.clearTimeout(timer);
   }, [osd]);
 
-  // Ambient glow: paint a tiny copy of the frame behind the player and let CSS blur it.
+  // Ambient glow: four times a second, paint a tiny copy of the frame behind the player and let
+  // CSS blur it. Two canvases take turns: each new frame fades in over the previous one, which
+  // stays opaque underneath, so colours drift instead of jumping and the glow never dims mid-fade
+  // (the fade is done by the compositor, so it costs next to nothing). Paused or in a hidden tab,
+  // it paints only when the frame changes (a seek).
   useEffect(() => {
     if (!ambientOn) return;
-    const canvas = ambient.current;
     const el = media.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !el || !context) return;
+    const canvases = [...(ambient.current?.querySelectorAll("canvas") ?? [])];
+    if (!el || canvases.length !== 2) return;
+    let front = 0;
     const paint = () => {
+      const next = canvases[1 - front]!;
+      const current = canvases[front]!;
       try {
-        context.drawImage(el, 0, 0, canvas.width, canvas.height);
-      } catch {}
+        next.getContext("2d")?.drawImage(el, 0, 0, next.width, next.height);
+      } catch {
+        return;
+      }
+      // Hidden behind the current frame, reset the next one to transparent, then fade it in on top.
+      next.style.transition = "none";
+      next.style.opacity = "0";
+      next.style.zIndex = "1";
+      current.style.zIndex = "0";
+      void next.offsetWidth;
+      next.style.transition = "";
+      next.style.opacity = "1";
+      front = 1 - front;
+    };
+    let timer: number | undefined;
+    const sync = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (playing && !document.hidden) timer = window.setInterval(paint, 250);
     };
     paint();
-    const timer = window.setInterval(paint, 250);
-    return () => window.clearInterval(timer);
-  }, [ambientOn, started]);
+    sync();
+    el.addEventListener("seeked", paint);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.clearInterval(timer);
+      el.removeEventListener("seeked", paint);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [ambientOn, started, playing]);
 
   // Autoplay countdown at the end.
   useEffect(() => {
@@ -591,13 +620,15 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     <div className="relative">
       {/* Extends only vertically: a box wider than the player would widen the page. The blur still spreads sideways. */}
       {ambientOn && (
-        <canvas
+        <div
           ref={ambient}
-          width={32}
-          height={18}
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 -inset-y-[8%] -z-10 h-[116%] w-full opacity-60 blur-[70px] saturate-150 transition-opacity duration-1000 dark:opacity-70"
-        />
+          className="pointer-events-none absolute inset-x-0 -inset-y-[8%] -z-10 h-[116%] w-full opacity-60 blur-[70px] saturate-150 dark:opacity-70"
+        >
+          {[0, 1].map((i) => (
+            <canvas key={i} width={32} height={18} className="absolute inset-0 size-full opacity-0 transition-opacity duration-200 ease-linear" />
+          ))}
+        </div>
       )}
       <div
         ref={shell}
