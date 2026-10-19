@@ -19,7 +19,9 @@ import { cn } from "@/lib/utils";
 const BASE_SIZE = "clamp(13px, 4.6cqh, 52px)";
 
 /**
- * Draws the active cues of a (hidden) WebVTT track over the video in the viewer's style.
+ * Draws the active cues of a (hidden) WebVTT track over the video in the viewer's style. No
+ * z-index: it sits right after the video, so the controls, seek-bar previews, segment tags and
+ * menus that come later always draw on top of it.
  * Cue markup comes from the browser's own parser (getCueAsHTML: text, i, b, u, ruby, spans).
  */
 export function SubtitleOverlay({ track, style, lifted }: { track: TextTrack | null; style: SubtitleStyle; lifted: boolean }) {
@@ -63,7 +65,7 @@ export function SubtitleOverlay({ track, style, lifted }: { track: TextTrack | n
     <div
       ref={box}
       aria-live="off"
-      className="pointer-events-none absolute inset-x-0 z-[1] mx-auto flex max-w-[90%] flex-col items-center gap-[0.15em] text-center leading-[1.35] whitespace-pre-line transition-[bottom,top] duration-200"
+      className="pointer-events-none absolute inset-x-0 mx-auto flex max-w-[90%] flex-col items-center gap-[0.15em] text-center leading-[1.35] whitespace-pre-line transition-[bottom,top] duration-200"
       style={{ fontSize: `calc(${BASE_SIZE} * ${style.size})`, ...(style.position === "top" ? { top: edge } : { bottom: edge }) }}
     />
   );
@@ -188,15 +190,23 @@ export function SubtitleStyleMenu({ style }: { style: SubtitleStyle }) {
         />
       </Field>
 
+      <label className="flex items-start justify-between gap-3">
+        <span>
+          <span className="block text-white/70">Use for styled subtitles</span>
+          <span className="block text-[11px] leading-snug text-white/45">Crunchyroll's too. Signs and on-screen text take this style as well.</span>
+        </span>
+        <Switch className="mt-0.5 shrink-0" checked={style.overrideStyled} onCheckedChange={(overrideStyled) => set({ overrideStyled })} />
+      </label>
+
       <button
         type="button"
         className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs text-white/70 hover:bg-white/10 hover:text-white"
-        onClick={() => actions.setting("subtitleStyle", defaultSubtitleStyle)}
+        onClick={() => actions.setting("subtitleStyle", { ...defaultSubtitleStyle, overrideStyled: style.overrideStyled })}
       >
         <RotateCcw className="size-3.5" /> Reset to default
       </button>
       <p className="px-1 text-[11px] leading-snug text-white/45">
-        Applies to captions such as YouTube's. Styled subtitles (Crunchyroll) keep their own look. Shortcuts: + and − change the size.
+        Styled subtitles (Crunchyroll) keep their own look unless the switch above is on; there, the font stays the subtitle's own. Shortcuts: + and − change the size.
       </p>
     </div>
   );

@@ -24,6 +24,8 @@ export type SubtitleStyle = {
   position: "bottom" | "top";
   /** Extra distance from the top or bottom edge, in % of the player's height. */
   offset: number;
+  /** Also restyle styled (ASS) subtitles, such as Crunchyroll's. Signs and on-screen text change too. */
+  overrideStyled: boolean;
 };
 
 export const defaultSubtitleStyle: SubtitleStyle = {
@@ -38,6 +40,7 @@ export const defaultSubtitleStyle: SubtitleStyle = {
   backgroundColor: "#000000",
   position: "bottom",
   offset: 0,
+  overrideStyled: false,
 };
 
 export const subtitleFonts: { value: SubtitleFont; label: string; family: string }[] = [
@@ -86,6 +89,7 @@ export function normalizeSubtitleStyle(saved: Partial<SubtitleStyle> | undefined
     edge: subtitleEdges.some((e) => e.value === style.edge) ? style.edge : "shadow",
     background: subtitleBackgrounds.some((b) => b.value === style.background) ? style.background : "transparent",
     position: style.position === "top" ? "top" : "bottom",
+    overrideStyled: style.overrideStyled === true,
   };
 }
 
@@ -130,3 +134,77 @@ export function subtitleTextStyle(style: SubtitleStyle): CSSProperties {
     display: style.background === "glass" ? "inline-block" : "inline",
   };
 }
+
+/** libass's style record (JASSUB passes it through as is). Colours are 0xRRGGBBAA, AA = transparency. */
+export type AssStyle = {
+  Name: string;
+  FontName: string;
+  FontSize: number;
+  PrimaryColour: number;
+  SecondaryColour: number;
+  OutlineColour: number;
+  BackColour: number;
+  Bold: number;
+  Italic: number;
+  Underline: number;
+  StrikeOut: number;
+  ScaleX: number;
+  ScaleY: number;
+  Spacing: number;
+  Angle: number;
+  BorderStyle: number;
+  Outline: number;
+  Shadow: number;
+  Alignment: number;
+  MarginL: number;
+  MarginR: number;
+  MarginV: number;
+  Encoding: number;
+  treat_fontname_as_pattern: number;
+  Blur: number;
+  Justify: number;
+};
+
+const assColour = (hex: string, opacity = 1) => {
+  const n = parseInt(hex.slice(1), 16);
+  return ((n << 8) | Math.round((1 - opacity) * 255)) >>> 0;
+};
+
+/**
+ * One of a styled script's styles restyled in the viewer's style. Sizes scale each style's own
+ * (so a script's relative sizes survive) and are in the script's units; `height` is the script's
+ * height in those units. Bottom-centred dialogue moves to the chosen edge; other alignments
+ * (signs, top lines) stay. Only the bundled font is available to libass, so the font choice
+ * doesn't carry over.
+ */
+export function assRestyle(style: SubtitleStyle, original: AssStyle, height: number): AssStyle {
+  const size = original.FontSize * style.size;
+  const boxed = style.background === "solid" || style.background === "transparent" || style.background === "glass";
+  const bgOpacity = style.background === "solid" ? 1 : style.background === "glass" ? 0.35 : 0.6;
+  const edge = style.edge;
+  const bottomCentre = original.Alignment === 2;
+  return {
+    ...original,
+    FontSize: size,
+    PrimaryColour: assColour(style.color, style.opacity),
+    SecondaryColour: assColour(style.color, style.opacity),
+    Bold: style.bold ? -1 : 0,
+    // 3: an opaque box behind the text, in OutlineColour.
+    BorderStyle: boxed ? 3 : 1,
+    OutlineColour: boxed
+      ? assColour(style.backgroundColor, bgOpacity)
+      : style.background === "glow"
+        ? assColour(style.backgroundColor, 0.85)
+        : assColour(style.edgeColor),
+    Outline: boxed ? size * 0.12 : style.background === "glow" ? size * 0.22 : edge === "outline" ? size * 0.08 : 0,
+    Blur: style.background === "glow" ? size * 0.2 : 0,
+    BackColour: assColour(style.edgeColor, edge === "none" ? 0 : 0.9),
+    Shadow: boxed ? 0 : edge === "shadow" ? size * 0.05 : edge === "raised" || edge === "depressed" ? size * 0.03 : 0,
+    // libass's internal alignment (not the file's numpad): 2 bottom centre, 6 top centre.
+    Alignment: bottomCentre ? (style.position === "top" ? 6 : 2) : original.Alignment,
+    MarginV: bottomCentre ? original.MarginV + (style.offset / 100) * height : original.MarginV,
+  };
+}
+
+/** A script's height in its own units, from its main style (scripts size dialogue at ~5.5% of it). */
+export const assHeight = (main: AssStyle) => main.FontSize / 0.055;

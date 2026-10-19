@@ -46,6 +46,7 @@ import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { effectiveQuality } from "@/lib/quality";
 import { SubtitleOverlay, SubtitleStyleMenu } from "./subtitles";
+import { assHeight, assRestyle, type AssStyle } from "@/lib/subtitle-style";
 import { createWatchMeter, type WatchMeter } from "@/lib/watch-meter";
 
 import { initialSubtitle, subtitleKey, attachVtt, audioKey, audioOptions, preferredAudio, type AudioOption } from "@/lib/player-tracks";
@@ -372,6 +373,10 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   // style; ASS keeps its authored styling on the JASSUB canvas.
   const track = subtitles.find((t) => subtitleKey(t) === subtitle);
   const [vttTrack, setVttTrack] = useState<TextTrack | null>(null);
+  // The styled-subtitle renderer and its script's own styles (for "Use for styled subtitles").
+  const assRenderer = useRef<JASSUB | null>(null);
+  const [assStyles, setAssStyles] = useState<AssStyle[] | null>(null);
+  const assRestyled = useRef(false);
   useEffect(() => {
     const el = media.current;
     if (!el || !track) return;
@@ -389,11 +394,43 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         availableFonts: { "liberation sans": jassubFont },
         fallbackFont: "liberation sans",
       });
+      // The script's main style, which the viewer's style is sized against when overriding.
+      // Only once the worker is ready: asked earlier, it fails.
+      const created = renderer;
+      created.addEventListener("ready", () =>
+        created.getStyles((error, styles) => {
+          if (!error && styles?.length && assRenderer.current === created) setAssStyles(styles as AssStyle[]);
+        }),
+      );
+      assRenderer.current = renderer;
     } catch (error) {
       console.warn("Subtitles failed to start", error);
     }
-    return () => renderer?.destroy();
+    return () => {
+      assRenderer.current = null;
+      assRestyled.current = false;
+      setAssStyles(null);
+      renderer?.destroy();
+    };
   }, [track]);
+
+  // "Use for styled subtitles": rewrite the script's styles in the viewer's style; switching it
+  // off puts the script's own back.
+  const subtitleStyle = settings.subtitleStyle;
+  useEffect(() => {
+    const renderer = assRenderer.current;
+    if (!renderer || !assStyles) return;
+    if (subtitleStyle.overrideStyled) {
+      // libass keeps its own built-in "Default" at index 0; the script's styles follow it.
+      const own = assStyles.length > 1 ? assStyles.slice(1) : assStyles;
+      const main = own.find((st) => /^default$/i.test(st.Name)) ?? own[0]!;
+      assStyles.forEach((original, i) => renderer.setStyle(assRestyle(subtitleStyle, original, assHeight(main)), i));
+      assRestyled.current = true;
+    } else if (assRestyled.current) {
+      assStyles.forEach((original, i) => renderer.setStyle(original, i));
+      assRestyled.current = false;
+    }
+  }, [assStyles, subtitleStyle]);
 
   // A service's playback session (stream limits): keep it alive while the page is open, end it on leave.
   useEffect(() => {
@@ -971,19 +1008,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                   {settings.speed}×
                 </button>
               )}
-              {subtitles.length > 0 ? (
-                <Control
-                  label={subtitle ? `Subtitles: ${subtitles.find((t) => subtitleKey(t) === subtitle)?.label ?? subtitle} (c)` : "Subtitles off (c)"}
-                  onClick={() => setMenu((m) => (m === "subtitles" ? null : "subtitles"))}
-                  pressed={Boolean(subtitle)}
-                >
-                  <Captions />
-                </Control>
-              ) : (
-                <Control label="Captions unavailable" disabled>
-                  <Captions />
-                </Control>
-              )}
+              {/* Subtitles live in Settings (and on c); no separate button. */}
               <div className="relative">
                 <Control label="Settings" onClick={() => setMenu((m) => (m ? null : "main"))} pressed={menu !== null}>
                   <Settings2 className={cn("transition-transform duration-300", menu && "rotate-45")} />
