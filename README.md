@@ -73,7 +73,7 @@ docker compose up -d
 
 To use a different DNS setup per backend (say, Crunchyroll through another Control D profile), add a second ctrld instance with its own config and address and point only that backend at it; `compose.ctrld.yaml` shows how. HTTP proxies work too: `COMPANION_PROXY` for the companions, `YOUTUBE_PROXY` for the backend's own requests. See Invidious' [notes on blocked IPs](https://docs.invidious.io/youtube-errors-explained/) for more.
 
-Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then enter the code from `docker compose logs -f companion-signed-in` at google.com/device. Settings → Age-restricted shows the same steps.
+Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then sign in with the google.com/device code shown in Settings → Signed-in playback. The sign-in is kept across restarts in the `companion-signed-in-session` volume.
 
 ### Releases
 

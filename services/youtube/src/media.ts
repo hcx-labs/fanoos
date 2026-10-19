@@ -9,6 +9,7 @@ import { config } from "./config.ts";
 import { sign, verifySignature } from "./crypto.ts";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
+import { thumbnailFallbacks } from "./image-fallbacks.ts";
 
 const imageHosts = /^(i\d?\.ytimg\.com|yt\d?\.ggpht\.com|yt\d?\.googleusercontent\.com|lh\d\.googleusercontent\.com)$/;
 
@@ -43,21 +44,24 @@ export const mediaRoutes = new Hono<ServiceEnv>();
 
 mediaRoutes.get("/img", async (c) => {
   const url = target("img", c.req.query("u"), c.req.query("s"), imageHosts);
-  const get = (u: URL) => fetch(u, { headers: { "user-agent": "Mozilla/5.0" } });
+  const get = (u: URL) => fetch(u, { headers: { "user-agent": "Mozilla/5.0" }, signal: c.req.raw.signal });
   let upstream = await get(url);
   // A missing 16:9 thumbnail (some videos, or some addresses for age-restricted ones): try the
   // other full-size name, then 640×480, and only then the always-present 480×360 one.
   let fallback = false;
-  if (upstream.status === 404 && /\/(hq720|maxresdefault)\.jpg$/.test(url.pathname)) {
-    for (const name of ["maxresdefault.jpg", "hq720.jpg", "sddefault.jpg", "hqdefault.jpg"]) {
-      const next = new URL(url.pathname.replace(/[^/]+\.jpg$/, name), url);
-      if (next.pathname === url.pathname) continue;
+  if (upstream.status === 404) {
+    for (const next of thumbnailFallbacks(url)) {
+      await upstream.body?.cancel();
       upstream = await get(next);
       fallback = true;
-      if (upstream.ok) break;
+      // Don't turn a rate limit or server failure into requests for every image size.
+      if (upstream.status !== 404) break;
     }
   }
-  if (!upstream.ok || !upstream.body) throw fail(502, "Image unavailable.");
+  if (!upstream.ok || !upstream.body) {
+    await upstream.body?.cancel();
+    throw fail(502, "Image unavailable.");
+  }
   return new Response(upstream.body, {
     headers: {
       "content-type": upstream.headers.get("content-type") ?? "image/jpeg",

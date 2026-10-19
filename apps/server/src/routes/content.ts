@@ -4,7 +4,7 @@
  * the backend named in the URL (/api/v/<slug>/…). No provider-specific code lives here.
  */
 import { Hono } from "hono";
-import type { BackendFeature, Channel, ChannelPage, Comment, CommentPage, Playlist, ResolvedLink, SearchResults, Video, VideoDetail } from "@tube/shared";
+import type { BackendFeature, Channel, ChannelAbout, ChannelPage, Comment, CommentPage, Playlist, ResolvedLink, SearchResults, Video, VideoDetail } from "@tube/shared";
 import { accountById, accountsFor, BackendError, bySlug, call, type CoreAccount, infoOf, noteRelink, relay, serviceBySlug, services, viaToIds } from "../backends.ts";
 import { db } from "../db.ts";
 import { type AppEnv, fail, requireUser } from "../http.ts";
@@ -67,6 +67,21 @@ contentRoutes.get("/feed", async (c) => {
   if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
   const videos = items.filter((v) => !group || groups.get(`${v.backend}:${v.channelId}`) === group);
   return c.json(videos.sort((a, b) => b.published.localeCompare(a.published)));
+});
+
+/** What followed channels and shows released in [from, to), oldest first (the Calendar). */
+contentRoutes.get("/calendar", async (c) => {
+  const user = c.get("user");
+  const backend = c.req.query("backend") || undefined;
+  const range = { from: c.req.query("from"), to: c.req.query("to") };
+  if (!range.from || !range.to || !(Date.parse(range.from) < Date.parse(range.to))) throw fail(400, "Pick a date range.");
+  if (Date.parse(range.to) - Date.parse(range.from) > 70 * 864e5) throw fail(400, "Pick a range of up to 70 days.");
+  const accounts = accountsFor(user.id, { feed: true }).filter((a) => !backend || a.slug === backend);
+  const { items, failed } = await each(accounts, async (slug, list) =>
+    has(slug, "calendar") ? viaToIds(await call<Video[]>(slug, "/calendar", { accounts: refsOf(list), query: range }), list, slug) : [],
+  );
+  if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
+  return c.json(items.sort((a, b) => a.published.localeCompare(b.published)));
 });
 
 /** Progress the services track themselves (YouTube's lives in the Fanoos account instead). */
@@ -183,10 +198,18 @@ item.get("/channels/:id", async (c) => {
   const slug = slugOf(c.req.param("slug"));
   const list = mine(c.get("user").id, slug);
   const id = safeId(c.req.param("id"));
-  const page = await call<ChannelPage>(slug, `/channels/${id}`, { accounts: refsOf(list), query: { section: c.req.query("section") } }).catch(relay);
+  const page = await call<ChannelPage>(slug, `/channels/${id}`, { accounts: refsOf(list), query: { section: c.req.query("section"), next: c.req.query("next"), q: c.req.query("q"), sort: c.req.query("sort") } }).catch(relay);
   const group = groupsOf(c.get("user").id).get(`${slug}:${id}`);
   const [channel] = viaToIds([{ ...page.channel, group }], list, slug);
   return c.json({ ...page, channel: channel!, videos: viaToIds(page.videos, list, slug) } satisfies ChannelPage);
+});
+
+/** Full description, rather than the abbreviated channel browse metadata. */
+item.get("/channels/:id/about", async (c) => {
+  const slug = slugOf(c.req.param("slug"));
+  const id = safeId(c.req.param("id"));
+  const list = mine(c.get("user").id, slug);
+  return c.json(await call<ChannelAbout>(slug, `/channels/${id}/about`, { accounts: refsOf(list) }).catch(relay));
 });
 
 /** Which of the viewer's accounts follow this channel or show. */

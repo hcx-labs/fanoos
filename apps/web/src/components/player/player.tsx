@@ -42,6 +42,7 @@ import { useSource } from "@/lib/source";
 import { actions, getLocalState, useSettings, useStore, type Settings } from "@/lib/store";
 import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { effectiveQuality } from "@/lib/quality";
 import { createWatchMeter, type WatchMeter } from "@/lib/watch-meter";
 
 export type PlayerHandle = { seek: (time: number) => void; play: () => void };
@@ -59,6 +60,7 @@ type Props = {
 };
 
 const speeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const noSubtitles: Subtitle[] = [];
 
 type Osd = { icon: LucideIcon; label?: string; id: number };
 
@@ -155,7 +157,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   // Read once: where playback last stopped (saved to the account, or by the service itself).
   const [resumeAt] = useState(() => startAt ?? getLocalState().progress[key] ?? video.progress ?? 0);
   // Subtitles (styled .ass, rendered by JASSUB over the video) and other audio languages.
-  const subtitles = stream.subtitles ?? [];
+  const subtitles = stream.subtitles ?? noSubtitles;
   const savedLanguages = useStore((s) => s.languages);
   const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, savedLanguages?.subtitles, video.episode?.audio));
   const versions = video.episode?.versions ?? [];
@@ -268,8 +270,11 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     const resume = handoff.current && handoff.current.from !== stream.dash ? handoff.current : null;
     handoff.current = null;
     setFailure(null);
+    setHeights([]);
+    setPlayingHeight(null);
     if (stream.dash) {
       const player = MediaPlayer().create();
+      let disposed = false;
       player.updateSettings({
         // No limitBitrateByPortal: in dash.js 5 it hides higher qualities entirely, which
         // also breaks manual 1440p/4K. Auto is capped to the player's size below instead.
@@ -288,7 +293,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       const start = (resume ? resume.time : resumeAt) || 0;
       let placed = !start;
       const place = () => {
-        if (placed) return;
+        if (disposed || placed) return;
         placed = true;
         if (el.currentTime < start - 1) player.seek(start);
       };
@@ -296,6 +301,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         // One video track per codec: pick the first the device decodes efficiently.
         const tracks = player.getTracksFor("video");
         const order = await preference;
+        if (disposed) return;
         const chosen = order.map((re) => tracks.find((t) => re.test(t.codec ?? ""))).find(Boolean) ?? tracks[0];
         if (chosen && chosen !== player.getCurrentTrackFor("video")) player.setCurrentTrack(chosen);
         place();
@@ -324,6 +330,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       // Development aid: inspect playback from the browser console.
       if (import.meta.env.DEV) Object.assign(window, { __dash: player });
       return () => {
+        disposed = true;
+        el.removeEventListener("loadedmetadata", place);
         // If another stream replaces this one, carry on from here.
         handoff.current = { from: stream.dash!, time: el.currentTime, playing: !el.paused };
         dash.current = null;
@@ -332,7 +340,14 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     }
     if (stream.progressive) {
       el.src = stream.progressive;
-      if (resumeAt) el.addEventListener("loadedmetadata", () => (el.currentTime = resumeAt), { once: true });
+      const place = () => { el.currentTime = resumeAt; };
+      if (resumeAt) el.addEventListener("loadedmetadata", place, { once: true });
+      return () => {
+        el.removeEventListener("loadedmetadata", place);
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
+      };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.dash, stream.progressive]);
@@ -397,8 +412,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     // Lift any cap first: dash.js leaves capped qualities out of the list.
     player.updateSettings({ streaming: { abr: { maxBitrate: { video: -1 } } } });
     const reps = player.getRepresentationsByType("video");
-    const wanted = settings.quality === "auto" ? null : Number.parseInt(settings.quality, 10);
-    if (wanted === null) {
+    const quality = effectiveQuality(settings.quality, heights);
+    if (quality === "auto") {
       const fit = reps.filter((r) => r.height >= portal).sort((a, b) => a.height - b.height || b.bandwidth - a.bandwidth)[0];
       player.updateSettings({
         streaming: { abr: { autoSwitchBitrate: { video: true }, maxBitrate: { video: fit && portal ? Math.ceil(fit.bandwidth / 1000) : -1 } } },
@@ -406,7 +421,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       return;
     }
     player.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
-    const target = heights.find((h) => h <= wanted) ?? heights.at(-1)!;
+    const target = Number.parseInt(quality, 10);
     const rep = reps.filter((r) => r.height === target).sort((a, b) => b.bandwidth - a.bandwidth)[0];
     if (rep) player.setRepresentationForTypeById("video", rep.id, true);
   }, [settings.quality, heights, portal]);
@@ -649,7 +664,9 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           playsInline
           preload="metadata"
           loop={loop}
-          className="size-full object-contain"
+          // YouTube's 4:3 fallback posters contain black bars around a 16:9 image.
+          // Fill the poster area, but never crop the video once playback starts.
+          className={cn("size-full", started ? "object-contain" : "object-cover")}
           onClick={() => {
             if (menu) return setMenu(null);
             toggle();
@@ -1052,6 +1069,7 @@ function SettingsPanel({
 }) {
   const row = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10";
   const skipping = Object.values(settings.segments).some((a) => a === "skip");
+  const qualityForVideo = effectiveQuality(settings.quality, heights);
   return (
     <div
       role="menu"
@@ -1082,7 +1100,7 @@ function SettingsPanel({
           <button type="button" className={row} onClick={() => onView("quality")}>
             <Sparkles className="size-4 text-white/70" /> Quality
             <span className="ml-auto text-white/60">
-              {settings.quality === "auto" ? `Auto${playingHeight ? ` (${playingHeight}p)` : ""}` : settings.quality}
+              {qualityForVideo === "auto" ? `Auto${playingHeight ? ` (${playingHeight}p)` : ""}` : qualityForVideo}
             </span>
             <ChevronRight className="size-4 text-white/40" />
           </button>
@@ -1189,13 +1207,15 @@ function SettingsPanel({
             <button
               key={quality}
               type="button"
+              role="menuitemradio"
+              aria-checked={qualityForVideo === quality}
               className={row}
               onClick={() => {
                 actions.setting("quality", quality);
                 onView("main");
               }}
             >
-              <Check className={cn("size-4", settings.quality === quality ? "text-brand" : "opacity-0")} />
+              <Check className={cn("size-4", qualityForVideo === quality ? "text-brand" : "opacity-0")} />
               {quality === "auto" ? "Auto" : quality}
               {quality !== "auto" && (
                 <span className="ml-auto text-[10px] font-bold text-white/50">

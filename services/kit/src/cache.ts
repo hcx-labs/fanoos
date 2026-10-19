@@ -22,6 +22,17 @@ export class TtlCache<T> {
     return value;
   }
 
+  /** Read without allocating or evicting another entry on a miss. */
+  peek(key: string): Promise<T> | undefined {
+    const hit = this.entries.get(key);
+    if (!hit) return undefined;
+    if (hit.expires <= Date.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return hit.value;
+  }
+
   delete(key: string) {
     this.entries.delete(key);
   }

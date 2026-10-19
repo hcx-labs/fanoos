@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -40,7 +40,7 @@ import { languageLabel } from "@/components/player/player";
 import { useSource, type CommentSort, type Rating } from "@/lib/source";
 import { accountActions, useAccounts } from "@/lib/session";
 import { actions, useSettings, useStore } from "@/lib/store";
-import type { Channel, Comment, Segment, Video, VideoDetail } from "@/lib/types";
+import type { Chapter, Channel, Comment, Segment, Video, VideoDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
 
@@ -57,7 +57,12 @@ export function WatchPage() {
   const loaded = state.data?.video;
   useTitle(loaded ? (dearrow && loaded.altTitle ? loaded.altTitle : loaded.title) : state.status === "loading" ? null : "Video unavailable");
   const [theater, setTheater] = useState(false);
-  const [time, setTime] = useState(0);
+  const chapterPanel = useRef<{ updateTime: (time: number) => void }>(null);
+  const playbackTime = useRef(0);
+  const updateTime = useCallback((time: number) => {
+    playbackTime.current = time;
+    chapterPanel.current?.updateTime(time);
+  }, []);
   const player = useRef<PlayerHandle>(null);
   // Switching an episode's audio language loads another id (each dub is its own episode).
   // Keep the page as it is while that loads, so only the stream changes.
@@ -90,6 +95,7 @@ export function WatchPage() {
     );
 
   const { video, channel, next } = detail;
+  const playbackKey = video.episode ? `${video.backend}:${video.episode.seriesId}:${video.episode.season}:${video.episode.number}` : itemKey(video);
   const stream =
     detail.stream.unavailable?.code === "starting" && !starting
       ? {
@@ -118,7 +124,7 @@ export function WatchPage() {
         >
           <Player
             // One player per episode, whichever language: a dub switch swaps only its stream.
-            key={video.episode ? `${video.backend}:${video.episode.seriesId}:${video.episode.season}:${video.episode.number}` : itemKey(video)}
+            key={playbackKey}
             ref={player}
             video={video}
             stream={stream}
@@ -126,7 +132,7 @@ export function WatchPage() {
             next={next[0]}
             theater={theater}
             onTheaterChange={setTheater}
-            onTime={setTime}
+            onTime={updateTime}
           />
         </div>
         <div className={"min-w-0 xl:col-start-1 xl:row-start-2"}>
@@ -134,7 +140,7 @@ export function WatchPage() {
           {can(video.backend, "comments") && <Comments video={video} />}
         </div>
         <aside className={cn("mt-8 min-w-0 xl:col-start-2 xl:mt-0", theater ? "xl:row-start-2 xl:pt-5" : "xl:row-span-2 xl:row-start-1")}>
-          <SidePanel video={video} next={next} time={time} onSeek={seek} />
+          <SidePanel key={playbackKey} ref={chapterPanel} time={playbackTime} video={video} next={next} onSeek={seek} />
         </aside>
       </div>
     </div>
@@ -388,10 +394,25 @@ function AudioVersions({ video }: { video: Video }) {
   );
 }
 
-function SidePanel({ video, next, time, onSeek }: { video: Video; next: Video[]; time: number; onSeek: (t: number) => void }) {
+const noChapters: Chapter[] = [];
+
+function SidePanel({ video, next, ref, time, onSeek }: { video: Video; next: Video[]; ref: Ref<{ updateTime: (time: number) => void }>; time: RefObject<number>; onSeek: (t: number) => void }) {
   const settings = useSettings();
-  const chapters = video.chapters ?? [];
-  const current = [...chapters].reverse().find((c) => time >= c.start);
+  const chapters = video.chapters ?? noChapters;
+  const [chapterIndex, setChapterIndex] = useState(() => chapters.findLastIndex((chapter) => chapter.start <= time.current));
+  const lastChapter = useRef(chapterIndex);
+  const updateChapter = useCallback((seconds: number) => {
+    const index = chapters.findLastIndex((chapter) => seconds >= chapter.start);
+    // Playback ticks stay in the player. Only chapter boundaries update this panel.
+    if (index !== lastChapter.current) {
+      lastChapter.current = index;
+      setChapterIndex(index);
+    }
+  }, [chapters]);
+  useImperativeHandle(ref, () => ({ updateTime: updateChapter }), [updateChapter]);
+  // An audio switch can replace chapter data while paused, without another playback tick.
+  useEffect(() => updateChapter(time.current), [updateChapter, time]);
+  const current = chapters[chapterIndex];
   return (
     <Tabs defaultValue="next" className="bg-card gap-0 overflow-hidden rounded-2xl border xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)]">
       <div className="flex items-center gap-2 border-b px-3 py-2.5">

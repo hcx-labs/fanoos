@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { api, qs } from "./api";
 import type { ItemRef } from "./paths";
 import { useAccounts } from "./session";
-import type { Channel, ChannelPage, Comment, CommentPage, CommentSort, Playlist, ResolvedLink, SearchFilters, SearchResults, Video, VideoDetail } from "./types";
+import type { Channel, ChannelAbout, ChannelPage, Comment, CommentPage, CommentSort, Playlist, ResolvedLink, SearchFilters, SearchResults, Video, VideoDetail } from "./types";
 
 export type Rating = "like" | "dislike" | "none";
 
@@ -35,12 +35,14 @@ const source = {
   /** Started-but-unfinished items the services track themselves. */
   continueWatching: () => api<Video[]>("/continue"),
   playlists: () => api<Playlist[]>("/playlists"),
+  channelAbout: (ref: ItemRef) => api<ChannelAbout>(`${v(ref.backend)}/channels/${ref.id}/about`),
   followers: (channel: ItemRef) => api<string[]>(`${v(channel.backend)}/channels/${channel.id}/followers`),
   setGroup: (channel: ItemRef, group: string | null) => api(`${v(channel.backend)}/channels/${channel.id}/group`, { method: "PUT", body: { group } }),
   video: (ref: ItemRef) => api<VideoDetail>(`${v(ref.backend)}/videos/${ref.id}`),
   comments: (ref: ItemRef, sort: CommentSort, next?: string) => api<CommentPage>(`${v(ref.backend)}/videos/${ref.id}/comments${qs({ sort, next })}`),
   replies: (backend: string | undefined, token: string) => api<CommentPage>(`${v(backend)}/comments/replies${qs({ token })}`),
-  channel: (ref: ItemRef, section?: string) => api<ChannelPage>(`${v(ref.backend)}/channels/${ref.id}${qs({ section })}`),
+  channel: (ref: ItemRef, section?: string, options: { next?: string; signal?: AbortSignal; query?: string; sort?: "new" | "popular" } = {}) =>
+    api<ChannelPage>(`${v(ref.backend)}/channels/${ref.id}${qs({ section, next: options.next, q: options.query, sort: options.sort })}`, { signal: options.signal }),
   search: (query: string, filters: SearchFilters, backend?: string) => api<SearchSection[]>(`/search${qs({ q: query, backend, ...filters })}`),
   /** Several items by key, grouped per backend (Watch later, history). */
   async videos(refs: ItemRef[]) {

@@ -39,7 +39,8 @@ export type Profile = {
 export type AgeRestrictedSetup =
   | { status: "off" }
   | { status: "starting" }
-  | { status: "waiting"; code: string; url: string }
+  /** `external`: shown by the instance in its own container (Docker), which signs in on its own once approved. */
+  | { status: "waiting"; code: string; url: string; external?: boolean }
   /** `external`: it runs as its own service (Docker), not started by the backend. */
   | { status: "ready"; external?: boolean }
   /** Runs as its own service (Docker) and isn't answering yet: start it there. */
@@ -207,10 +208,15 @@ export type Stream = {
 
 export type VideoDetail = { video: Video; channel: Channel; next: Video[]; stream: Stream };
 
+/** Full channel description, loaded separately from the abbreviated browse metadata. */
+export type ChannelAbout = { description: string };
+
 /** A channel or show page. Shows split into sections (seasons); channels usually have none. */
 export type ChannelPage = {
   channel: Channel;
   videos: Video[];
+  /** Opaque cursor for the next batch in this channel/section. Absent at the end. */
+  next?: string;
   sections?: { id: string; label: string; count?: number }[];
   /** The section `videos` belong to. */
   section?: string;

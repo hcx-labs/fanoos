@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router";
 import { Clock3, CircleCheck, Radio } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
@@ -7,20 +8,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatAgo, formatDuration, formatViews } from "@/lib/format";
 import { itemKey, paths } from "@/lib/paths";
 import { segmentMeta } from "@/lib/segments";
-import { actions, useProgress, useSettings, useStore } from "@/lib/store";
+import { actions, useProgress, useStore } from "@/lib/store";
 import type { Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function useVideoTitle(video: Video) {
-  const { dearrow } = useSettings();
+  const dearrow = useStore((s) => s.settings.dearrow);
   return dearrow && video.altTitle ? video.altTitle : video.title;
 }
 
 export function Thumbnail({ video, className, size = "md" }: { video: Video; className?: string; size?: "sm" | "md" | "lg" }) {
   const key = itemKey(video);
   const later = useStore((s) => s.watchLater.includes(key));
-  const settings = useSettings();
-  const skipped = (video.segments ?? []).filter((s) => settings.segments[s.category] === "skip");
+  const segments = useStore((s) => s.settings.segments);
+  const skipped = (video.segments ?? []).filter((s) => segments[s.category] === "skip");
   const position = useProgress(key) ?? video.progress ?? 0;
   const watched = video.duration ? Math.min(1, position / video.duration) : 0;
 
@@ -36,6 +37,7 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
         src={video.thumbnail}
         alt=""
         loading={size === "lg" ? "eager" : "lazy"}
+        decoding="async"
         referrerPolicy="no-referrer"
         className="size-full object-cover transition-transform duration-500 ease-out-quint group-hover/card:scale-[1.03]"
       />
@@ -48,13 +50,13 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
           <Radio className="size-3" /> Live
         </span>
       ) : video.duration > 0 ? (
-        <span className="absolute right-2 bottom-2 rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white tabular-nums backdrop-blur-sm">
+        <span className="absolute right-2 bottom-2 rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white tabular-nums">
           {formatDuration(video.duration)}
         </span>
       ) : null}
 
       {size !== "sm" && skipped.length > 0 && (
-        <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover/card:opacity-100">
+        <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white opacity-0 transition-opacity group-hover/card:opacity-100">
           <span className="flex gap-0.5">
             {skipped.map((s, i) => (
               <span key={i} className="size-1.5 rounded-full" style={{ background: segmentMeta[s.category].color }} />
@@ -76,7 +78,7 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
                 actions.toggleWatchLater(key);
               }}
               className={cn(
-                "absolute top-2 right-2 grid size-8 place-items-center rounded-lg bg-black/70 text-white backdrop-blur-sm transition-opacity hover:bg-black/90 focus-visible:opacity-100",
+                "absolute top-2 right-2 grid size-8 place-items-center rounded-lg bg-black/70 text-white transition-opacity hover:bg-black/90 focus-visible:opacity-100",
                 later ? "opacity-100" : "opacity-0 group-hover/card:opacity-100",
               )}
             >
@@ -109,7 +111,7 @@ function Meta({ video, className }: { video: Video; className?: string }) {
 }
 
 /** Grid card: thumbnail above, avatar + text below. */
-export function VideoCard({ video, showChannel = true }: { video: Video; showChannel?: boolean }) {
+export const VideoCard = memo(function VideoCard({ video, showChannel = true }: { video: Video; showChannel?: boolean }) {
   const channel = { id: video.channelId, backend: video.backend, name: video.channelName };
   const title = useVideoTitle(video);
   return (
@@ -140,10 +142,10 @@ export function VideoCard({ video, showChannel = true }: { video: Video; showCha
       </div>
     </article>
   );
-}
+});
 
 /** Horizontal row: used for search results, up next, and lists. */
-export function VideoRow({
+export const VideoRow = memo(function VideoRow({
   video,
   size = "md",
   active,
@@ -204,4 +206,4 @@ export function VideoRow({
       </div>
     </article>
   );
-}
+});

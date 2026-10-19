@@ -19,12 +19,13 @@ import type {
 } from "@tube/shared";
 import type { Context } from "hono";
 import { accountParam, createService, fail, type ServiceEnv } from "../../kit/src/service.ts";
-import { SharedCache } from "./cache.ts";
+import { SharedCache, TtlCache } from "./cache.ts";
+import { channelListKey } from "./channel-list.ts";
 import { config } from "./config.ts";
 import { decrypt, encrypt, randomId, randomToken } from "./crypto.ts";
 import { db, pending } from "./db.ts";
 import { communityTitle, segments, votes } from "./extras.ts";
-import { feed, followedSet, followers, subscriptions, syncSubscriptions } from "./feed.ts";
+import { calendar, feed, followedSet, followers, subscriptions, syncSubscriptions } from "./feed.ts";
 import {
   authorizationUrl,
   canWrite,
@@ -42,7 +43,7 @@ import {
   userInfo,
   WriteNotAllowed,
 } from "./google.ts";
-import { channelPage, comments, replies, search, videoDetail, yt } from "./innertube.ts";
+import { channelAbout, channelContinuation, channelPage, comments, replies, search, videoDetail, yt } from "./innertube.ts";
 import { mediaRoutes, proxyImage } from "./media.ts";
 import { getSettings, setSetting } from "./settings.ts";
 import { resumeSignedIn, signedInState, signOutSignedIn, startSignedIn } from "./signed-in.ts";
@@ -65,7 +66,7 @@ const info = (): BackendInfo => ({
       can: ["Subscribe and unsubscribe", "Like and dislike", "Comment and reply"],
     },
   },
-  features: ["feed", "search", "comments", "ratings", "follow", "playlists", "dislikes", "segments", "titles"],
+  features: ["feed", "calendar", "search", "comments", "ratings", "follow", "playlists", "dislikes", "segments", "titles"],
   linkHosts: ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtube-nocookie.com", "youtube-nocookie.com"],
   urls: { video: "https://www.youtube.com/watch?v={id}", channel: "https://www.youtube.com/channel/{id}" },
   private: true,
@@ -219,6 +220,7 @@ const refs = (c: Context<ServiceEnv>) => c.get("accounts");
 v1.get("/following", async (c) => c.json(await upstream("subscriptions", () => subscriptions(refs(c), c.req.query("refresh") === "1"))));
 
 v1.get("/feed", async (c) => c.json(await upstream("your feed", () => feed(refs(c), Number(c.req.query("limit")) || 120))));
+v1.get("/calendar", async (c) => c.json(await upstream("your calendar", () => calendar(refs(c), c.req.query("from") ?? "", c.req.query("to") ?? ""))));
 
 // YouTube progress lives in the Fanoos account (app data), not on YouTube.
 v1.get("/continue", (c) => c.json([]));
@@ -226,11 +228,16 @@ v1.get("/continue", (c) => c.json([]));
 /** Bump when the manifest or its segment-URL format changes. */
 const MANIFEST_VERSION = 3;
 
-const details = new SharedCache<Omit<VideoDetail, "stream">>("video");
+// Old detail entries used a guessed hq720 URL instead of YouTube's full-size artwork.
+const details = new SharedCache<Omit<VideoDetail, "stream">>("video-thumbnails-v2");
 const channels = new SharedCache<Awaited<ReturnType<typeof channelPage>>>("channel");
 const searches = new SharedCache<SearchResults>("search");
+const channelDescriptions = new SharedCache<Awaited<ReturnType<typeof channelAbout>>>("channel-about");
 const playlistCache = new SharedCache<Playlist[]>("playlists");
 const channelCached = (id: string) => channels.get(id, () => channelPage(id));
+// Browsing responses contain process-local cursors. Never put them in the shared Redis cache.
+// The first page lives for less time than its continuation, so refresh always yields a usable cursor.
+const browsingChannels = new TtlCache<Awaited<ReturnType<typeof channelPage>>>(60_000, 500);
 
 v1.get("/videos/:id", async (c) => {
   const id = videoId(c.req.param("id"));
@@ -292,8 +299,27 @@ v1.get("/videos", async (c) => {
 });
 
 v1.get("/channels/:id", async (c) => {
-  const page = await upstream("this channel", () => channelCached(channelId(c.req.param("id"))));
+  const id = channelId(c.req.param("id"));
+  const next = c.req.query("next");
+  const query = (c.req.query("q") ?? "").trim();
+  const sort = c.req.query("sort") ?? "new";
+  if (query.length > 200) throw fail(400, "Channel search is limited to 200 characters.");
+  if (sort !== "new" && sort !== "popular") throw fail(400, "Invalid channel sort.");
+  const options = { query, sort } as const;
+  const key = channelListKey(id, options);
+  const page = await upstream("this channel", () => next
+    ? channelContinuation(id, next, options).catch((error: unknown) => {
+        if ((error as { status?: number }).status === 410) browsingChannels.delete(key);
+        throw error;
+      })
+    : browsingChannels.get(key, () => channelPage(id, true, options)));
+
   return c.json({ ...page, channel: { ...page.channel, feedUrl: `https://www.youtube.com/feeds/videos.xml?channel_id=${page.channel.id}` } });
+});
+
+v1.get("/channels/:id/about", async (c) => {
+  const id = channelId(c.req.param("id"));
+  return c.json(await upstream("this channel's description", () => channelDescriptions.get(id, () => channelAbout(id))));
 });
 
 v1.get("/channels/:id/followers", (c) => c.json(followers(refs(c), channelId(c.req.param("id")))));
@@ -447,7 +473,7 @@ v1.post("/actions/progress", (c) => c.json({ ok: true }));
 // ---------------------------------------------------------------------------
 // Owner settings: signed-in playback for age-restricted videos
 
-v1.get("/admin/age-restricted", (c) => c.json(signedInState()));
+v1.get("/admin/age-restricted", async (c) => c.json(await signedInState()));
 v1.get("/admin/age-restricted/settings", (c) => c.json(getSettings()));
 v1.put("/admin/age-restricted/settings", async (c) => {
   const body = await c.req.json<{ botCheckFallback?: unknown }>();
@@ -455,9 +481,9 @@ v1.put("/admin/age-restricted/settings", async (c) => {
   return c.json(getSettings());
 });
 v1.post("/admin/age-restricted/start", async (c) => c.json(await startSignedIn()));
-v1.post("/admin/age-restricted/sign-out", (c) => {
+v1.post("/admin/age-restricted/sign-out", async (c) => {
   signOutSignedIn();
-  return c.json(signedInState());
+  return c.json(await signedInState());
 });
 
 // Bring back signed-in playback for age-restricted videos if it was set up before.

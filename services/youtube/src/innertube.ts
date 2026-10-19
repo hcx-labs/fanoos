@@ -6,8 +6,11 @@
  * field degrades to an empty value instead of throwing.
  */
 import { Innertube } from "youtubei.js";
-import type { Channel, Comment, CommentPage, CommentSort, SearchFilters, SearchResults, Video } from "@tube/shared";
+import type { Channel, ChannelAbout, ChannelPage, Comment, CommentPage, CommentSort, SearchFilters, SearchResults, Video } from "@tube/shared";
 import { TtlCache } from "./cache.ts";
+import { ChannelCursors } from "./channel-cursors.ts";
+import { channelDescription } from "./channel-description.ts";
+import { channelList, channelListKey, type ChannelListOptions } from "./channel-list.ts";
 import { randomToken } from "./crypto.ts";
 import { proxyImage } from "./media.ts";
 import { ago, chaptersFrom, clock, count, isRounded, text, thumb } from "./parse.ts";
@@ -62,7 +65,7 @@ export function lockupToVideo(n: Node): Video | null {
     viewsApprox: isRounded(views),
     published: ago(age),
     description: "",
-    thumbnail: proxyImage(thumb(n.content_id)),
+    thumbnail: proxyImage(thumb(n.content_id, n.content_image?.image)),
     live,
   };
 }
@@ -84,7 +87,7 @@ function videoNode(v: Node): Video | null {
     viewsApprox: isRounded(v.view_count ?? v.short_view_count),
     published: ago(v.published),
     description: text(v.snippets?.[0]?.text ?? v.description_snippet),
-    thumbnail: proxyImage(thumb(id)),
+    thumbnail: proxyImage(thumb(id, v.thumbnails)),
     live: Boolean(v.is_live),
     upcoming: Boolean(v.is_upcoming),
   };
@@ -120,7 +123,7 @@ export async function videoDetail(id: string): Promise<{ video: Video; channel: 
     likes: b.like_count ?? undefined,
     published: Number.isNaN(published) ? ago(info.primary_info?.relative_date) : new Date(published).toISOString(),
     description,
-    thumbnail: proxyImage(thumb(id)),
+    thumbnail: proxyImage(thumb(id, b.thumbnail)),
     live: Boolean(b.is_live),
     upcoming: Boolean(b.is_upcoming),
     chapters: chaptersFrom(description),
@@ -189,7 +192,26 @@ export async function replies(token: string): Promise<CommentPage> {
   };
 }
 
-export async function channelPage(id: string): Promise<{ channel: Channel; videos: Video[] }> {
+/** Browse metadata is an SEO teaser; the About endpoint carries the full description. */
+export async function channelAbout(id: string): Promise<ChannelAbout> {
+  const channel = await (await yt()).getChannel(id);
+  const about = await channel.getAbout();
+  return { description: channelDescription(about) };
+}
+
+const channelCursors = new ChannelCursors<ChannelPage>();
+export const channelContinuation = (id: string, token: string, options: ChannelListOptions = {}) => channelCursors.next(channelListKey(id, options), token);
+
+async function channelBatch(channel: Channel, tab: Node, paginate: boolean, scope: string): Promise<ChannelPage> {
+  const videos = (tab.videos ?? []).map(toVideo).filter((video: Video | null): video is Video => video !== null)
+    .map((video: Video) => ({ ...video, channelId: channel.id, channelName: channel.name }));
+  const next = paginate && tab.has_continuation
+    ? await channelCursors.remember(scope, async () => channelBatch(channel, await tab.getContinuation(), true, scope))
+    : undefined;
+  return { channel: { ...channel, avatar: channel.avatar || videos[0]?.channelAvatar }, videos, next };
+}
+
+export async function channelPage(id: string, paginate = false, options: ChannelListOptions = {}): Promise<ChannelPage> {
   const ch: Node = await (await yt()).getChannel(id);
   const header = JSON.stringify(ch.header ?? {});
   const meta = ch.metadata ?? {};
@@ -205,14 +227,10 @@ export async function channelPage(id: string): Promise<{ channel: Channel; video
     videoCount: count(/([\d.,]+[KMB]?) videos/i.exec(header)?.[1]),
     unseen: 0,
   };
-  let videos: Video[] = [];
-  try {
-    const tab: Node = await ch.getVideos();
-    videos = (tab.videos ?? tab.contents ?? []).map(toVideo).filter((v: Video | null): v is Video => v !== null);
-  } catch {
-    // Channels without a videos tab (e.g. topic channels).
-  }
-  return { channel: { ...channel, avatar: channel.avatar || videos[0]?.channelAvatar }, videos: videos.map((v) => ({ ...v, channelId: id, channelName: channel.name })) };
+  // Topic channels may have no uploads tab. Network failures must remain retryable errors.
+  const list = await channelList(ch, options);
+  if (!list) return { channel, videos: [] };
+  return channelBatch(channel, list, paginate, channelListKey(id, options));
 }
 
 export async function search(query: string, filters: SearchFilters): Promise<SearchResults> {

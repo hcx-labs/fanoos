@@ -50,8 +50,22 @@ export function chaptersFrom(description: string) {
   return out.length >= 2 && out[0]!.start === 0 ? out : [];
 }
 
-/**
- * 1280×720, 16:9 thumbnail. (hqdefault.jpg is 480×360 4:3 with baked-in black bars.)
- * The image proxy falls back to hqdefault for the few videos without it.
- */
-export const thumb = (videoId: string) => `https://i.ytimg.com/vi/${videoId}/hq720.jpg`;
+type ThumbnailCandidate = { url?: string; width?: number; height?: number };
+
+/** Prefer a full-size 16:9 URL YouTube actually supplied, including its query parameters. */
+export function thumb(videoId: string, thumbnails: readonly ThumbnailCandidate[] = []): string {
+  const candidates = Array.isArray(thumbnails) ? thumbnails : [];
+  const fullSize = candidates.filter((image) => {
+    if (!image.url || !image.width || !image.height || image.width < 1280 || image.height < 720) return false;
+    const ratio = image.width / image.height;
+    if (ratio < 1.7 || ratio > 1.85) return false;
+    try {
+      const url = new URL(image.url.startsWith("//") ? `https:${image.url}` : image.url);
+      return url.protocol === "https:" && /^i\d?\.ytimg\.com$/.test(url.hostname);
+    } catch {
+      return false;
+    }
+  }).sort((a, b) => b.width! * b.height! - a.width! * a.height!);
+  // Not every upload has hq720. The proxy tries other sizes if maxres is unavailable.
+  return fullSize[0]?.url ?? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+}

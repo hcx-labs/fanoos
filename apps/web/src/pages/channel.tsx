@@ -1,19 +1,20 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { BellOff, Check, Rss, Search, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
 import { ChannelAvatar } from "@/components/channel-avatar";
+import { ChannelAbout } from "@/components/channel-about";
 import { VideoCard } from "@/components/video-card";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useData } from "@/hooks/use-data";
+import { useChannelVideos } from "@/hooks/use-channel-videos";
+import { RequestError } from "@/lib/api";
 import { formatCount, hueFor } from "@/lib/format";
 import { itemKey, paths } from "@/lib/paths";
-import { useSource } from "@/lib/source";
 import { ServiceMark } from "@/components/service-mark";
 import { Thumbnail } from "@/components/video-card";
 import { formatDuration } from "@/lib/format";
@@ -22,33 +23,32 @@ import { cn } from "@/lib/utils";
 import { Play } from "lucide-react";
 import { actions, useStore } from "@/lib/store";
 import { useTitle } from "@/hooks/use-title";
+import { useArtworkGlow } from "@/lib/artwork-glow";
 
 export function ChannelPage() {
   const { backend = "youtube", id = "" } = useParams();
   const ref = { backend, id };
-  const source = useSource();
   const [section, setSection] = useState<string | undefined>();
-  const state = useData(() => source.channel(ref, section), [source.key, backend, id, section]);
-  useTitle(state.data?.channel.name ?? (state.status === "loading" ? null : "Not found"));
-  const muted = useStore((s) => s.muted.includes(itemKey(ref)));
+  const [tab, setTab] = useState("videos");
   const [sort, setSort] = useState<"new" | "popular">("new");
   const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const { identity, state, loadMore, loadingMore, moreError, reload } = useChannelVideos(ref, section, query, query ? "new" : sort);
+  const expired = moreError instanceof RequestError && moreError.code === "cursor_expired";
+  const muted = useStore((s) => s.muted.includes(itemKey(ref)));
+  const videos = state.data?.videos ?? [];
 
-  const videos = useMemo(() => {
-    if (state.status !== "ready" || !state.data) return [];
-    const list = state.data.videos.filter((v) => v.title.toLowerCase().includes(filter.toLowerCase()));
-    return sort === "popular" ? [...list].sort((a, b) => b.views - a.views) : list;
-  }, [state, sort, filter]);
-
-  // Keep showing the show while another season loads.
-  const last = useRef(state.data);
-  if (state.data) last.current = state.data;
-  const page = state.data ?? (section ? last.current : undefined);
+  // Preserve the header and focused search field while a new server-side view loads.
+  const last = useRef<{ identity: string; page: Page } | null>(null);
+  if (state.data) last.current = { identity, page: state.data };
+  const page = state.data ?? (last.current?.identity === identity ? last.current.page : undefined);
+  useTitle(page?.channel.name ?? (state.status === "loading" ? null : "Not found"));
+  useArtworkGlow(page?.channel, state.status === "loading");
 
   if (page?.channel.kind === "series")
-    return <ShowPage page={page} muted={muted} loading={state.status === "loading"} onSection={setSection} />;
+    return <ShowPage page={page} muted={muted} loading={state.status === "loading"} error={state.error} onRetry={reload} onSection={setSection} />;
 
-  if (state.status === "loading")
+  if (state.status === "loading" && !page)
     return (
       <div className="page">
         <Skeleton className="h-48 w-full rounded-3xl" />
@@ -61,19 +61,20 @@ export function ChannelPage() {
         </div>
       </div>
     );
-  if (state.status === "error" || !state.data)
+  if (!page)
     return (
       <Empty className="mt-24">
         <EmptyHeader>
-          <EmptyTitle>Not found</EmptyTitle>
+          <EmptyTitle>{state.error?.message ?? "Not found"}</EmptyTitle>
         </EmptyHeader>
+        <Button variant="outline" onClick={reload}>Try again</Button>
         <Button asChild variant="outline">
           <Link to="/">Back to your feed</Link>
         </Button>
       </Empty>
     );
 
-  const { channel } = state.data;
+  const { channel } = page;
   const hue = hueFor(channel.name);
 
   return (
@@ -120,9 +121,13 @@ export function ChannelPage() {
               size="icon"
               className="rounded-full"
               aria-label="Copy RSS feed"
-              onClick={() => {
-                void navigator.clipboard?.writeText(channel.feedUrl!);
-                toast.success("RSS feed link copied", { description: "Follow this channel in any feed reader, no account needed." });
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(channel.feedUrl!);
+                  toast.success("RSS feed link copied", { description: "Follow this channel in any feed reader, no account needed." });
+                } catch {
+                  toast.error("Couldn't copy the feed link", { description: "Open About to access the feed." });
+                }
               }}
             >
               <Rss />
@@ -131,54 +136,66 @@ export function ChannelPage() {
         </div>
       </header>
 
-      <Tabs defaultValue="videos" className="mt-8">
+      <Tabs value={tab} onValueChange={setTab} className="mt-8">
         <div className="flex flex-wrap items-center gap-3 border-b">
           <TabsList variant="line" className="h-11">
             <TabsTrigger value="videos">Videos</TabsTrigger>
             <TabsTrigger value="about">About</TabsTrigger>
           </TabsList>
-          <div className="ml-auto flex items-center gap-2 pb-2">
-            <div className="relative">
-              <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-              <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search channel" className="h-8 w-48 rounded-full pl-8" />
-            </div>
-            <Tabs value={sort} onValueChange={(v) => setSort(v as "new" | "popular")}>
+          {tab === "videos" && <div className="ml-auto flex max-w-full flex-wrap items-center gap-2 pb-2">
+            <form className="relative" role="search" aria-label="Search this channel" onSubmit={(event) => {
+              event.preventDefault();
+              const next = filter.trim();
+              if (next === query) reload();
+              else setQuery(next);
+            }}>
+              <button type="submit" aria-label="Search channel" className="text-muted-foreground absolute inset-y-0 left-0 grid w-8 place-items-center">
+                <Search className="size-4" />
+              </button>
+              <Input value={filter} onChange={(e) => setFilter(e.target.value)} maxLength={200} placeholder="Search channel" aria-label="Search channel videos" className="h-8 w-48 rounded-full pl-8" />
+            </form>
+            <Tabs value={query ? "" : sort} onValueChange={(v) => { setSort(v as "new" | "popular"); setQuery(""); setFilter(""); }}>
               <TabsList>
                 <TabsTrigger value="new">Latest</TabsTrigger>
                 <TabsTrigger value="popular">Popular</TabsTrigger>
               </TabsList>
             </Tabs>
-          </div>
+          </div>}
         </div>
         <TabsContent value="videos" className="mt-6">
-          <div className="grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            {videos.map((video) => (
-              <VideoCard key={video.id} video={video} showChannel={false} />
-            ))}
+          {query && (
+            <div className="text-muted-foreground mb-4 flex items-center gap-3 text-sm">
+              <p>Results for "{query}" across this channel, ranked by YouTube.</p>
+              <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setFilter(""); }}>Clear search</Button>
+            </div>
+          )}
+          {state.status === "error" && (
+            <div className="mb-4 flex items-center gap-3">
+              <p role="alert" className="text-destructive text-sm">{state.error.message}</p>
+              <Button variant="outline" onClick={reload}>Try again</Button>
+            </div>
+          )}
+          <div aria-busy={state.status === "loading"} className="grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {state.status === "loading"
+              ? Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="aspect-video rounded-xl" />)
+              : videos.map((video) => <VideoCard key={itemKey(video)} video={video} showChannel={false} />)}
+          </div>
+          <div className="mt-8 flex flex-col items-center gap-3">
+            {state.status === "ready" && (
+              <p className="text-muted-foreground text-center text-xs" role="status">
+                {`${videos.length} ${query ? "results" : "videos"} shown.${state.data.next ? "" : query ? " End of results." : " No more videos."}`}
+              </p>
+            )}
+            {moreError && <p role="alert" className="text-destructive max-w-prose text-center text-sm">{moreError.message}</p>}
+            {state.data?.next && (
+              <Button variant="outline" className="rounded-full px-6" disabled={loadingMore} onClick={() => expired ? reload() : void loadMore()}>
+                {loadingMore ? "Loading more…" : expired ? "Reload videos" : moreError ? "Try again" : "Load more videos"}
+              </Button>
+            )}
           </div>
         </TabsContent>
-        <TabsContent value="about" className="mt-6 max-w-2xl space-y-4 text-sm">
-          <p className="text-base leading-relaxed whitespace-pre-line">{channel.description || "No description."}</p>
-          <dl className="bg-card grid grid-cols-[auto_1fr] gap-x-8 gap-y-3 rounded-2xl border p-5">
-            {channel.subscribers ? (
-              <>
-                <dt className="text-muted-foreground">Subscribers</dt>
-                <dd>{channel.subscribers.toLocaleString()}</dd>
-              </>
-            ) : null}
-            {channel.videoCount ? (
-              <>
-                <dt className="text-muted-foreground">Videos</dt>
-                <dd>{channel.videoCount.toLocaleString()}</dd>
-              </>
-            ) : null}
-            {channel.feedUrl && (
-              <>
-                <dt className="text-muted-foreground">RSS feed</dt>
-                <dd className="break-all">{channel.feedUrl}</dd>
-              </>
-            )}
-          </dl>
+        <TabsContent value="about" className="mt-6">
+          <ChannelAbout channel={channel} />
         </TabsContent>
       </Tabs>
     </div>
@@ -189,7 +206,7 @@ export function ChannelPage() {
  * A show: its key art as a backdrop, the poster, what it's about, then a season picker and the
  * episodes of that season with how far each one was watched.
  */
-function ShowPage({ page, muted, loading, onSection }: { page: Page; muted: boolean; loading: boolean; onSection: (id: string) => void }) {
+function ShowPage({ page, muted, loading, error, onRetry, onSection }: { page: Page; muted: boolean; loading: boolean; error?: Error; onRetry: () => void; onSection: (id: string) => void }) {
   const { channel, videos, sections = [], section } = page;
   const progress = useStore((s) => s.progress);
   const watched = (v: Video) => progress[itemKey(v)] ?? v.progress ?? 0;
@@ -252,6 +269,12 @@ function ShowPage({ page, muted, loading, onSection }: { page: Page; muted: bool
       </div>
 
       <div className="page pt-0">
+        {error && (
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <p role="alert" className="text-destructive text-sm">{error.message} Showing the previously loaded season.</p>
+            <Button variant="outline" onClick={onRetry}>Try again</Button>
+          </div>
+        )}
         {sections.length > 1 && (
           <div className="no-scrollbar -mx-2 -my-1.5 flex gap-2 overflow-x-auto px-2 py-1.5" role="tablist" aria-label="Seasons">
             {sections.map((s) => (

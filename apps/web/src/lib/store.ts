@@ -115,7 +115,9 @@ async function save() {
 }
 
 function set(update: (current: State) => State) {
-  state = update(state);
+  const next = update(state);
+  if (Object.is(next, state)) return;
+  state = next;
   emit();
   if (!loaded) return;
   window.clearTimeout(saveTimer);
@@ -179,7 +181,7 @@ export const useSettings = () => useStore((s) => s.settings);
 
 export const actions = {
   setting<K extends keyof Settings>(key: K, value: Settings[K]) {
-    set((s) => ({ ...s, settings: { ...s.settings, [key]: value } }));
+    set((s) => Object.is(s.settings[key], value) ? s : ({ ...s, settings: { ...s.settings, [key]: value } }));
   },
   segment(category: SegmentCategory, action: SegmentAction) {
     set((s) => ({ ...s, settings: { ...s.settings, segments: { ...s.settings.segments, [category]: action } } }));

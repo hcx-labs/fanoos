@@ -23,6 +23,7 @@ import {
   upNext,
   watchlist,
 } from "./catalog.ts";
+import { mapLimit } from "../../kit/src/cache.ts";
 import { API, api, bearer, CrunchyrollError, deviceCode, deviceToken, send } from "./client.ts";
 import { config } from "./config.ts";
 import { encrypt, randomId, randomToken } from "./crypto.ts";
@@ -43,7 +44,7 @@ const info = (): BackendInfo => ({
     cannot: ["See your password (you sign in on crunchyroll.com)", "Change your plan or payment details", "Decrypt video: your browser does that"],
     requirement: "Needs a Crunchyroll Premium membership.",
   },
-  features: ["feed", "search", "follow", "progress", "segments"],
+  features: ["feed", "calendar", "search", "follow", "progress", "segments"],
   linkHosts: ["crunchyroll.com", "www.crunchyroll.com"],
   urls: { video: "https://www.crunchyroll.com/watch/{id}", channel: "https://www.crunchyroll.com/series/{id}" },
   private: false,
@@ -246,6 +247,38 @@ v1.get("/feed", async (c) =>
         }
       }
       return [...byId.values()].sort((a, b) => b.published.localeCompare(a.published)).slice(0, Number(c.req.query("limit")) || 120);
+    }),
+  ),
+);
+
+/**
+ * Episodes of watchlist shows released in [from, to), for the calendar: the two newest seasons of
+ * each show (an airing season and, around a season change, the one before). Dates follow the
+ * account's audio language, as everywhere else.
+ */
+v1.get("/calendar", async (c) =>
+  c.json(
+    await upstream("your calendar", async () => {
+      const refs = usable(c.get("accounts"));
+      const [start, end] = [Date.parse(c.req.query("from") ?? ""), Date.parse(c.req.query("to") ?? "")];
+      const ref = refs[0];
+      if (!ref || !(start < end)) return [];
+      const shows = new Map<string, string[]>();
+      for (const r of refs) for (const item of await watchlist(r).catch(() => [])) {
+        const id = item.panel?.episode_metadata?.series_id;
+        if (id) shows.set(id, [...new Set([...(shows.get(id) ?? []), r])]);
+      }
+      const found = await mapLimit([...shows], 6, async ([seriesId, via]) => {
+        const list = (await seasons(ref, seriesId).catch(() => []))
+          .slice()
+          .sort((a, b) => (a.season_sequence_number ?? a.season_number ?? 0) - (b.season_sequence_number ?? b.season_number ?? 0))
+          .slice(-2);
+        const eps = (await Promise.all(list.map((s) => episodes(ref, s.id).catch(() => [])))).flat();
+        return eps
+          .map((e) => ({ ...toVideo(e), via }))
+          .filter((v) => Date.parse(v.published) >= start && Date.parse(v.published) < end);
+      });
+      return found.flat().sort((a, b) => a.published.localeCompare(b.published));
     }),
   ),
 );

@@ -26,13 +26,15 @@
  *   POST   /v1/accounts/import  AccountImport    ProviderAccount  (optional: adopt credentials)
  *   GET    /v1/following?accounts=&refresh=1     Channel[]        (subscriptions, watchlist)
  *   GET    /v1/feed?accounts=&limit=             Video[]          newest first
+ *   GET    /v1/calendar?accounts=&from=&to=      Video[]          released in [from, to) (ISO dates)
  *   GET    /v1/continue?accounts=                Video[]          with progress (if tracked)
  *   GET    /v1/search?q=&type=&duration=&uploaded=&sort=   SearchResults
  *   GET    /v1/videos/:id?accounts=              VideoDetail
  *   GET    /v1/videos?ids=&accounts=             Video[]
  *   GET    /v1/videos/:id/comments?sort=&next=   CommentPage
  *   GET    /v1/comments/replies?token=           CommentPage
- *   GET    /v1/channels/:id?section=&accounts=   ChannelPage
+ *   GET    /v1/channels/:id?section=&accounts=&next=&q=&sort=   ChannelPage
+ *   GET    /v1/channels/:id/about?accounts=      ChannelAbout (full description, optional)
  *   GET    /v1/channels/:id/followers?accounts=  string[] (refs following it)
  *   GET    /v1/playlists?accounts=               Playlist[]
  *   GET    /v1/resolve?url=                      ResolvedLink     (a pasted link)
@@ -45,6 +47,7 @@
  *
  * Errors: non-2xx with ApiError. Codes core understands: "relink" (the account must be linked
  * again), "read_only", "quota", "not_found", "unsupported", "upstream".
+ * Channel pagination may return 410 "cursor_expired"; reload the first page to start again.
  */
 import type { Channel, ProviderKind } from "./index.ts";
 
@@ -54,6 +57,8 @@ export type ProtocolVersion = 1;
 export type BackendFeature =
   /** New items from what accounts follow. */
   | "feed"
+  /** What followed channels and shows released in a date range (the Calendar). */
+  | "calendar"
   | "search"
   | "comments"
   /** Like/dislike as an account. */

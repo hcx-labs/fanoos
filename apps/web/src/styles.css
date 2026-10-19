@@ -279,7 +279,7 @@
   }
 }
 
-/* Header is flush with the page at rest; frosted with a hairline once content scrolls under. */
+/* Opaque when scrolled: no backdrop needs resampling as thumbnails pass underneath. */
 @utility top-bar {
   background: transparent;
   border-bottom: 1px solid transparent;
@@ -287,21 +287,41 @@
     background-color 200ms ease,
     border-color 200ms ease;
   &[data-scrolled] {
-    background: color-mix(in oklab, var(--background) 80%, transparent);
-    backdrop-filter: saturate(160%) blur(18px);
+    background: var(--background);
     border-bottom-color: var(--border);
   }
 }
 
-/* Soft light leak behind page tops. */
+/* Registered colors interpolate without replacing or animating the whole page. */
+@property --page-glow-primary {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+@property --page-glow-secondary {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+@property --page-glow-strength {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* Soft light leak behind page tops. Only artwork changes trigger this finite fade. */
 @utility page-glow {
+  --page-glow-primary: var(--brand);
+  --page-glow-secondary: var(--chart-2);
+  --page-glow-strength: 1;
+  transition: --page-glow-primary 700ms ease, --page-glow-secondary 700ms ease, --page-glow-strength 700ms ease;
   position: absolute;
   inset: 0 0 auto 0;
   height: 28rem;
   pointer-events: none;
   background:
-    radial-gradient(60% 60% at 15% 0%, color-mix(in oklab, var(--brand) 14%, transparent), transparent 70%),
-    radial-gradient(40% 50% at 85% 0%, color-mix(in oklab, var(--chart-2) 10%, transparent), transparent 70%);
+    radial-gradient(60% 60% at 15% 0%, color-mix(in oklab, var(--page-glow-primary) calc(14% * var(--page-glow-strength)), transparent), transparent 70%),
+    radial-gradient(40% 50% at 85% 0%, color-mix(in oklab, var(--page-glow-secondary) calc(10% * var(--page-glow-strength)), transparent), transparent 70%);
 }
 
 @utility rise {

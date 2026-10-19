@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ChevronLeft, ChevronRight, CircleCheck, Clock3, Play } from "lucide-react";
 import { ChannelAvatar } from "@/components/channel-avatar";
@@ -46,21 +46,38 @@ export function Hero({ videos }: { videos: Video[] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [still] = useState(prefersReducedMotion);
+  const section = useRef<HTMLElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    let intersecting = false;
+    const sync = () => setVisible(intersecting && !document.hidden);
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = entry!.isIntersecting;
+      sync();
+    });
+    if (section.current) observer.observe(section.current);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [videos.length]);
   const count = videos.length;
   const go = (i: number) => setIndex(((i % count) + count) % count);
 
   useEffect(() => {
-    if (paused || still || count < 2) return;
+    if (paused || still || !visible || count < 2) return;
     const timer = window.setTimeout(() => go(index + 1), ROTATE_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, paused, still, count]);
+  }, [index, paused, still, visible, count]);
 
   if (!count) return null;
   const video = videos[Math.min(index, count - 1)]!;
 
   return (
     <section
+      ref={section}
       aria-roledescription="carousel"
       aria-label="Latest from your channels"
       className="group/hero bg-card relative mt-8 overflow-hidden rounded-3xl border"
@@ -165,7 +182,7 @@ export function Hero({ videos }: { videos: Video[] }) {
                 <QueueItem
                   video={v}
                   active={i === index}
-                  running={i === index && !paused && !still}
+                  running={i === index && !paused && !still && visible}
                   onSelect={() => go(i)}
                 />
               </li>

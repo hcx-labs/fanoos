@@ -170,20 +170,39 @@ export async function subscriptions(refs: string[], refresh = false): Promise<(C
   return channels;
 }
 
-export async function feed(refs: string[], limit = 120): Promise<Video[]> {
-  const accounts = usable(refs);
-  if (!accounts.length) return [];
+type Upload = { channel: Channel & { via: string[] }; e: RssEntry };
+
+/** Every followed channel's latest uploads (no Shorts), newest first. */
+async function uploads(accounts: string[]): Promise<Upload[]> {
   await syncAll(accounts);
   const channels = mergedChannels(accounts);
   const perChannel = await mapLimit(channels, 8, async (c) => ({ channel: c, entries: await rss(c.id).catch(() => [] as RssEntry[]) }));
-
-  const items = perChannel
+  return perChannel
     .flatMap(({ channel, entries }) => entries.filter((e) => !e.short).map((e) => ({ channel, e })))
-    .sort((a, b) => b.e.published.localeCompare(a.e.published))
-    .slice(0, limit);
+    .sort((a, b) => b.e.published.localeCompare(a.e.published));
+}
 
+export async function feed(refs: string[], limit = 120): Promise<Video[]> {
+  const accounts = usable(refs);
+  if (!accounts.length) return [];
+  return toVideos(accounts, (await uploads(accounts)).slice(0, limit), true);
+}
+
+/**
+ * Uploads released between two dates, for the calendar. RSS lists each channel's latest 15, so
+ * weeks further back only show channels that upload rarely.
+ */
+export async function calendar(refs: string[], from: string, to: string): Promise<Video[]> {
+  const accounts = usable(refs);
+  if (!accounts.length) return [];
+  const [start, end] = [Date.parse(from), Date.parse(to)];
+  const items = (await uploads(accounts)).filter(({ e }) => Date.parse(e.published) >= start && Date.parse(e.published) < end).slice(0, 2000);
+  return toVideos(accounts, items, false);
+}
+
+async function toVideos(accounts: string[], items: Upload[], withTitles: boolean): Promise<Video[]> {
   const ids = items.map(({ e }) => e.id);
-  const [statsOf, community] = await Promise.all([enrich(accounts[0]!, ids), titles(ids.slice(0, 60))]);
+  const [statsOf, community] = await Promise.all([enrich(accounts[0]!, ids), withTitles ? titles(ids.slice(0, 60)) : new Map<string, string>()]);
 
   return items
     .map(({ channel, e }): Video => {

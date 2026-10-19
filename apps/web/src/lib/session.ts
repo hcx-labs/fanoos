@@ -35,14 +35,13 @@ export async function refreshSession() {
 }
 void refreshSession();
 
-export const useSession = () =>
-  useSyncExternalStore(
-    (l) => {
-      listeners.add(l);
-      return () => listeners.delete(l);
-    },
-    () => session,
-  );
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
+const getSnapshot = () => session;
+
+export const useSession = () => useSyncExternalStore(subscribe, getSnapshot);
 
 export const useProfile = () => {
   const s = useSession();

@@ -16,11 +16,11 @@ export function cleanUrl(raw: string): string {
 }
 
 /** "nexigo.com/products/nexigo-nova-mini…" */
-function display(url: string) {
+function display(url: string, truncate: boolean) {
   try {
     const u = new URL(url);
     const text = `${u.host.replace(/^www\./, "")}${u.pathname === "/" ? "" : u.pathname}${u.search}`;
-    return text.length > 48 ? `${text.slice(0, 46)}…` : text;
+    return truncate && text.length > 48 ? `${text.slice(0, 46)}…` : text;
   } catch {
     return url;
   }
@@ -33,7 +33,7 @@ const TOKEN = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])|(\b(?:\d{1,2}:)?\d{1,2}:
  * Plain text with clickable links (tracking parameters removed, opened without a
  * referrer) and, when onSeek is given, clickable timestamps.
  */
-export function RichText({ text, onSeek, maxSeconds }: { text: string; onSeek?: (seconds: number) => void; maxSeconds?: number }) {
+export function RichText({ text, onSeek, maxSeconds, truncateLinks = true }: { text: string; onSeek?: (seconds: number) => void; maxSeconds?: number; truncateLinks?: boolean }) {
   const out: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(TOKEN)) {
@@ -44,7 +44,7 @@ export function RichText({ text, onSeek, maxSeconds }: { text: string; onSeek?: 
       const href = cleanUrl(url);
       out.push(
         <a key={index} href={href} target="_blank" rel="noreferrer noopener nofollow" title={href} className="text-brand-strong break-all hover:underline">
-          {display(href)}
+          {display(href, truncateLinks)}
         </a>,
       );
     } else if (time && onSeek && (!maxSeconds || time.split(":").reduce((total, n) => total * 60 + Number(n), 0) <= maxSeconds)) {

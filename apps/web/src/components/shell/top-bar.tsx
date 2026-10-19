@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router";
 import {
+  CalendarDays,
   ChartColumn,
   Check,
   ChevronRight,
@@ -50,6 +51,7 @@ import { cn } from "@/lib/utils";
 export const nav = [
   { to: "/", label: "Home", icon: House, end: true },
   { to: "/following", label: "Following", icon: UsersRound },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/library", label: "Library", icon: LibraryBig },
   { to: "/analytics", label: "Analytics", icon: ChartColumn },
 ];
@@ -149,7 +151,7 @@ function PrivacyStatus() {
           <ShieldCheck className="text-brand size-5" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
+      <PopoverContent align="end" className="w-[26rem] max-w-[calc(100vw-2rem)] p-0">
         <div className="flex items-center gap-3 border-b p-4">
           <div className="bg-brand-soft text-brand-strong grid size-10 place-items-center rounded-xl">
             <ShieldCheck className="size-5" />
@@ -170,7 +172,7 @@ function PrivacyStatus() {
                 {row.ok ? <Check className="size-3" /> : <EyeOff className="size-2.5" />}
               </span>
               <span className="text-muted-foreground shrink-0 whitespace-nowrap">{row.label}</span>
-              <span className="ml-auto min-w-0 truncate text-right font-medium">{row.value}</span>
+              <span className="ml-auto min-w-0 flex-1 text-right font-medium break-words">{row.value}</span>
             </li>
           ))}
         </ul>
