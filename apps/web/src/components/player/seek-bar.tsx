@@ -94,27 +94,28 @@ export function SeekBar({ duration, current, buffered, chapters, segments, onSee
               <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${fill(buffered)}%` }} />
               <div className="bg-brand absolute inset-y-0 left-0" style={{ width: `${fill(shown)}%` }} />
               {preview !== null && <div className="absolute inset-y-0 left-0 bg-white/25" style={{ width: `${fill(preview)}%` }} />}
-              {/* Segments live inside each chapter so they share its height, rounding and gaps. */}
+              {/* Segments live inside each chapter so they share its height, rounding and gaps. The
+                  part already played is full colour and the rest dimmed, so progress stays visible
+                  inside a segment. */}
               {segments
                 .filter((seg) => seg.end > part.start && seg.start < part.end)
-                .map((seg, i) => (
-                  <div
-                    key={i}
-                    className="absolute inset-y-0"
-                    style={{
-                      left: `${fill(seg.start)}%`,
-                      width: `${fill(seg.end) - fill(seg.start)}%`,
-                      background: segmentMeta[seg.category].color,
-                    }}
-                  />
-                ))}
+                .map((seg, i) => {
+                  const [from, to, played] = [fill(seg.start), fill(seg.end), fill(Math.min(Math.max(shown, seg.start), seg.end))];
+                  const color = segmentMeta[seg.category].color;
+                  return (
+                    <div key={i}>
+                      {played > from && <div className="absolute inset-y-0" style={{ left: `${from}%`, width: `${played - from}%`, background: color }} />}
+                      {to > played && <div className="absolute inset-y-0 opacity-45" style={{ left: `${played}%`, width: `${to - played}%`, background: color }} />}
+                    </div>
+                  );
+                })}
             </div>
           );
         })}
       </div>
       <div
         className={cn(
-          "bg-brand pointer-events-none absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 scale-0 rounded-full shadow-md transition-[scale] group-hover/seek:scale-100 group-focus-visible/seek:scale-100 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white",
+          "bg-brand pointer-events-none absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 scale-0 rounded-full shadow-md ring-2 ring-white transition-[scale] group-hover/seek:scale-100 group-focus-visible/seek:scale-100 group-focus-visible/seek:ring-4",
           drag !== null && "scale-115 group-hover/seek:scale-115",
         )}
         style={{ left: percent(shown) }}
