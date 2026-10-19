@@ -7,6 +7,7 @@
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
 import { storageKey } from "./brand";
+import { defaultSubtitleStyle, normalizeSubtitleStyle, type SubtitleStyle } from "./subtitle-style";
 import type { SegmentCategory } from "./types";
 
 export type SegmentAction = "skip" | "mute" | "show" | "off";
@@ -25,6 +26,8 @@ export type Settings = {
   keepHistory: boolean;
   keepSearches: boolean;
   captions: boolean;
+  /** How caption text looks (subtitle-style.ts). */
+  subtitleStyle: SubtitleStyle;
   feedLayout: "grid" | "list";
 };
 
@@ -68,6 +71,7 @@ const defaults: State = {
     keepHistory: true,
     keepSearches: true,
     captions: false,
+    subtitleStyle: defaultSubtitleStyle,
     feedLayout: "grid",
   },
   progress: {},
@@ -92,7 +96,12 @@ function normalize(saved: Partial<State> | null | undefined): State {
     history: (saved.history ?? []).map((h) => ({ ...h, id: keyed(h.id) })),
     watchLater: (saved.watchLater ?? []).map(keyed),
     muted: (saved.muted ?? []).map(keyed),
-    settings: { ...defaults.settings, ...saved.settings, segments: { ...defaults.settings.segments, ...saved.settings?.segments } },
+    settings: {
+      ...defaults.settings,
+      ...saved.settings,
+      segments: { ...defaults.settings.segments, ...saved.settings?.segments },
+      subtitleStyle: normalizeSubtitleStyle(saved.settings?.subtitleStyle),
+    },
   };
 }
 

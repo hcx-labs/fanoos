@@ -35,26 +35,24 @@ export function preferredAudio(options: AudioOption[], saved?: string, current?:
     ?? mainFirst.find((o) => o.main) ?? mainFirst.find((o) => o.key === current) ?? mainFirst[0];
 }
 
-/** Only the selected VTT is attached. Disable before removing, including while loading. */
-export function attachVtt(video: HTMLVideoElement, subtitle: Subtitle, onError?: () => void): () => void {
+/**
+ * Only the selected VTT is attached. The browser keeps it hidden and only times the cues; the
+ * player draws them itself (SubtitleOverlay), so they can be styled. Disable before removing,
+ * including while loading.
+ */
+export function attachVtt(video: HTMLVideoElement, subtitle: Subtitle, onTrack: (track: TextTrack | null) => void, onError?: () => void): () => void {
   const track = document.createElement("track");
   track.kind = "subtitles";
   track.label = subtitle.label;
   track.srclang = subtitle.locale;
   track.src = subtitle.url;
-  // Keep unpositioned captions above our custom controls. Preserve authored positions.
-  const position = () => {
-    for (const cue of Array.from(track.track.cues ?? [])) {
-      if (cue instanceof VTTCue && cue.line === "auto") cue.line = -4;
-    }
-  };
-  track.addEventListener("load", position);
   if (onError) track.addEventListener("error", onError);
   video.append(track);
-  track.track.mode = "showing";
+  track.track.mode = "hidden";
+  onTrack(track.track);
   return () => {
-    track.removeEventListener("load", position);
     if (onError) track.removeEventListener("error", onError);
+    onTrack(null);
     track.track.mode = "disabled";
     track.remove();
   };

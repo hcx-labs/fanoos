@@ -8,6 +8,7 @@ import jassubFont from "jassub/dist/default.woff2?url";
 import {
   AudioLines,
   Captions,
+  Palette,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -44,6 +45,7 @@ import { actions, getLocalState, useSettings, useStore, type Settings } from "@/
 import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { effectiveQuality } from "@/lib/quality";
+import { SubtitleOverlay, SubtitleStyleMenu } from "./subtitles";
 import { createWatchMeter, type WatchMeter } from "@/lib/watch-meter";
 
 import { initialSubtitle, subtitleKey, attachVtt, audioKey, audioOptions, preferredAudio, type AudioOption } from "@/lib/player-tracks";
@@ -91,7 +93,7 @@ async function codecPreference(): Promise<RegExp[]> {
 }
 type Notice = { segment: Segment; id: number };
 
-type MenuView = "main" | "speed" | "quality" | "subtitles" | "audio";
+type MenuView = "main" | "speed" | "quality" | "subtitles" | "subtitleStyle" | "audio";
 
 const drmMessage = "This browser can't play protected video. Use Chrome, Edge or Firefox with protected content (DRM) allowed in its settings.";
 
@@ -366,12 +368,14 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.dash, stream.progressive]);
 
-  // VTT uses native text tracks; only ASS needs the styled JASSUB canvas.
+  // VTT cues are timed by a hidden native track and drawn by SubtitleOverlay in the viewer's
+  // style; ASS keeps its authored styling on the JASSUB canvas.
   const track = subtitles.find((t) => subtitleKey(t) === subtitle);
+  const [vttTrack, setVttTrack] = useState<TextTrack | null>(null);
   useEffect(() => {
     const el = media.current;
     if (!el || !track) return;
-    if (track.format === "vtt") return attachVtt(el, track, () => {
+    if (track.format === "vtt") return attachVtt(el, track, setVttTrack, () => {
       toast.error("Subtitles couldn't be loaded", { description: "Turn subtitles off and select the track again to retry." });
     });
     if (track.format !== "ass") return;
@@ -613,6 +617,16 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           );
           flash(Captions, subtitle ? "Off" : "On");
           break;
+        case "+":
+        case "=":
+        case "-": {
+          // Caption size, like YouTube.
+          const style = getLocalState().settings.subtitleStyle;
+          const size = Math.min(2.5, Math.max(0.5, Math.round((style.size + (key === "-" ? -0.1 : 0.1)) * 10) / 10));
+          actions.setting("subtitleStyle", { ...style, size });
+          flash(Captions, `${Math.round(size * 100)}%`);
+          break;
+        }
         case ">":
         case "<": {
           const index = speeds.indexOf(settings.speed);
@@ -739,6 +753,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
             if (!segmentMuted) setMuted(e.currentTarget.muted);
           }}
         />
+        {vttTrack && <SubtitleOverlay track={vttTrack} style={settings.subtitleStyle} lifted={chrome} />}
 
         {/* No playable stream (live) or a playback failure. */}
         {(failure || (!stream.dash && !stream.progressive)) && (
@@ -1205,6 +1220,20 @@ function SettingsPanel({
               {t.label}
             </button>
           ))}
+          <div className="my-1 h-px bg-white/10" />
+          <button type="button" className={row} onClick={() => onView("subtitleStyle")}>
+            <Palette className="size-4 text-white/70" /> Style
+            <ChevronRight className="ml-auto size-4 text-white/40" />
+          </button>
+        </>
+      )}
+      {view === "subtitleStyle" && (
+        <>
+          <button type="button" className={cn(row, "font-semibold")} onClick={() => onView("subtitles")}>
+            <ChevronLeft className="size-4" /> Subtitle style
+          </button>
+          <div className="my-1 h-px bg-white/10" />
+          <SubtitleStyleMenu style={settings.subtitleStyle} />
         </>
       )}
       {view === "audio" && (
