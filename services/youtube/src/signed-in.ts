@@ -3,11 +3,12 @@
  * videos). This backend starts it as a child process, reads Google's device sign-in code
  * from its output for the UI, and restarts it on boot when a session is saved. In a
  * container image it runs as its own service instead (compose.yaml), and is adopted
- * when it answers at COMPANION_SIGNED_IN_URL.
+ * when it answers at COMPANION_SIGNED_IN_URL; its pending code is read from its volume
+ * (COMPANION_SIGNED_IN_DIR, see docker/companion-signed-in.patch).
  * It is only ever asked to stream videos YouTube age-restricts (see stream.ts).
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AgeRestrictedSetup } from "@tube/shared";
 import { config } from "./config.ts";
@@ -28,7 +29,7 @@ export const signedInUrl = config.companion.signedInUrl || `http://127.0.0.1:${p
 let state: SignedInState = { status: "off" };
 let child: ChildProcess | null = null;
 
-export const signedInState = (): SignedInState => (external && state.status === "off" ? { status: "external", url: signedInUrl } : state);
+export const signedInState = async (): Promise<SignedInState> => (external ? externalState() : state);
 export const signedInReady = () => state.status === "ready";
 
 /** A completed sign-in leaves YouTube.js OAuth credentials in the cache folder. */
@@ -43,13 +44,36 @@ async function healthy() {
   }
 }
 
+/** The code the instance in another container is waiting for, if any (it removes it once signed in). */
+function pendingCode(): { url: string; code: string } | null {
+  if (!config.companion.signedInDir) return null;
+  try {
+    const p = JSON.parse(readFileSync(join(config.companion.signedInDir, "oauth-pending.json"), "utf8")) as { url: string; code: string; expiresAt: number };
+    return p.expiresAt > Date.now() ? { url: p.url, code: p.code } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The instance in another container (Docker): waiting for its code, signed in, or not running. */
+async function externalState(): Promise<SignedInState> {
+  const pending = pendingCode();
+  if (pending) {
+    state = { status: "off" };
+    return { status: "waiting", external: true, ...pending };
+  }
+  if (state.status === "ready") return state;
+  if (await healthy()) return (state = { status: "ready", external: true });
+  return { status: "external", url: signedInUrl };
+}
+
 /** Start the signed-in instance (or adopt one already running). */
 export async function startSignedIn(): Promise<SignedInState> {
   if (child || state.status === "ready") return state;
   if (!config.companion.secret) return (state = { status: "error", error: "COMPANION_SECRET isn't set on the server." });
-  if (await healthy()) return (state = { status: "ready", external: external || undefined });
-  // In a container there's no companion script or Deno: the instance has to run as its own service.
-  if (external) return (state = { status: "external", url: signedInUrl });
+  // In a container there's no companion script or Deno: the instance runs as its own service.
+  if (external) return externalState();
+  if (await healthy()) return (state = { status: "ready" });
 
   state = { status: "starting" };
   const proc = spawn("bash", [script, "signed-in"], {

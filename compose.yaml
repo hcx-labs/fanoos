@@ -48,8 +48,10 @@ services:
       COMPANION_URL: http://companion:8282
       # Optional signed-in instance for age-restricted videos (profile "age-restricted" below).
       COMPANION_SIGNED_IN_URL: http://companion-signed-in:8282
+      # Its volume, read-only: where it leaves the google.com/device code that Settings shows.
+      COMPANION_SIGNED_IN_DIR: /companion-signed-in
       COMPANION_SECRET: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
-    volumes: [youtube-data:/data]
+    volumes: [youtube-data:/data, companion-signed-in-session:/companion-signed-in:ro]
     depends_on: [redis, companion]
 
   crunchyroll:
@@ -74,20 +76,17 @@ services:
 
   # Optional: a signed-in companion, used only for age-restricted videos. Start it with
   #   docker compose --profile age-restricted up -d companion-signed-in
-  # and enter the code from its log (docker compose logs -f companion-signed-in) at google.com/device.
-  # Use a secondary Google account. The sign-in is kept in the companion-signed-in volume.
+  # then sign in with the code shown in Settings → Signed-in playback (also in its log). Use a
+  # secondary Google account. This companion is patched to keep the sign-in across restarts
+  # (docker/companion-signed-in.Dockerfile), in the companion-signed-in-session volume.
   companion-signed-in:
-    image: quay.io/invidious/invidious-companion:latest
+    image: ghcr.io/hcx-labs/fanoos-companion-signed-in:${FANOOS_VERSION:-latest}
     profiles: [age-restricted]
     restart: unless-stopped
     environment:
       SERVER_SECRET_KEY: ${COMPANION_SECRET:?set COMPANION_SECRET (16 characters) in .env}
-      HOST: 0.0.0.0
-      PORT: "8282"
-      YOUTUBE_SESSION_OAUTH_ENABLED: "true"
-      CACHE_DIRECTORY: /cache
       PROXY: ${COMPANION_PROXY:-}
-    volumes: [companion-signed-in:/cache]
+    volumes: [companion-signed-in-session:/var/tmp/youtubei.js]
 
   redis:
     image: redis:7-alpine
@@ -95,7 +94,7 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
 
 volumes:
-  companion-signed-in:
+  companion-signed-in-session:
   core-data:
   youtube-data:
   crunchyroll-data:

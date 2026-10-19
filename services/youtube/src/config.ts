@@ -21,6 +21,8 @@ export const config = {
     url: (env.COMPANION_URL ?? "").replace(/\/$/, ""),
     /** Optional signed-in instance, used only for videos YouTube age-restricts. */
     signedInUrl: (env.COMPANION_SIGNED_IN_URL ?? "").replace(/\/$/, ""),
+    /** That instance's volume, read-only (Docker): where it leaves the google.com/device code to enter. */
+    signedInDir: env.COMPANION_SIGNED_IN_DIR ?? "",
     secret: env.COMPANION_SECRET ?? "",
     get configured() {
       return Boolean(this.url && this.secret);

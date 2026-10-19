@@ -37,7 +37,7 @@ export function AgeRestrictedSetup() {
     const load = () => api<State>("/admin/b/youtube/age-restricted").then((s) => live && setState(s), () => {});
     void load();
     const timer = window.setInterval(() => {
-      if (state?.status === "starting" || state?.status === "waiting") void load();
+      if (state?.status === "starting" || state?.status === "waiting" || state?.status === "external") void load();
     }, 2500);
     return () => {
       live = false;
@@ -117,9 +117,11 @@ export function AgeRestrictedSetup() {
           <p className="text-muted-foreground flex items-center gap-2 text-xs">
             <Spinner className="size-3" /> Waiting for you to approve… this page updates by itself.
           </p>
-          <Button variant="ghost" size="sm" onClick={() => void run("/admin/b/youtube/age-restricted/sign-out", "Sign-in cancelled")} disabled={busy}>
-            Cancel
-          </Button>
+          {!state.external && (
+            <Button variant="ghost" size="sm" onClick={() => void run("/admin/b/youtube/age-restricted/sign-out", "Sign-in cancelled")} disabled={busy}>
+              Cancel
+            </Button>
+          )}
         </div>
       )}
 
@@ -129,14 +131,11 @@ export function AgeRestrictedSetup() {
             In Docker, signed-in playback runs as its own container, <code className="bg-muted rounded px-1 py-0.5 text-xs">companion-signed-in</code>. Start it
             next to <code className="bg-muted rounded px-1 py-0.5 text-xs">compose.yaml</code>:
           </p>
-          <pre className="bg-muted overflow-x-auto rounded-lg p-3 text-xs">docker compose --profile age-restricted up -d companion-signed-in{"\n"}docker compose logs -f companion-signed-in</pre>
-          <p className="text-muted-foreground text-xs">
-            On first start its log shows a code to enter at google.com/device. Sign in there with a secondary Google account; once the log says it started,
-            come back and check again. The sign-in is kept in the container's volume.
+          <pre className="bg-muted overflow-x-auto rounded-lg p-3 text-xs">docker compose --profile age-restricted up -d companion-signed-in</pre>
+          <p className="text-muted-foreground flex items-center gap-2 text-xs">
+            <Spinner className="size-3 shrink-0" /> Waiting for it to start… the code to sign in with appears here. Use a secondary Google account; the
+            sign-in is kept in the container's volume, across restarts.
           </p>
-          <Button onClick={() => void run("/admin/b/youtube/age-restricted/start")} disabled={busy}>
-            {busy && <Spinner />} Check again
-          </Button>
         </div>
       )}
 
@@ -144,8 +143,9 @@ export function AgeRestrictedSetup() {
         <p className="flex items-start gap-2 text-sm">
           <Check className="text-like mt-0.5 size-4 shrink-0" />
           <span>
-            Signed in. Age-restricted videos now play through this account. To sign out, stop <code className="bg-muted rounded px-1 py-0.5 text-xs">companion-signed-in</code> and
-            remove its volume (<code className="bg-muted rounded px-1 py-0.5 text-xs">docker compose --profile age-restricted down -v companion-signed-in</code>).
+            Signed in. Age-restricted videos now play through this account. To sign out, delete the saved sign-in from its volume,{" "}
+            <code className="bg-muted rounded px-1 py-0.5 text-xs">docker run --rm -v fanoos_companion-signed-in-session:/s alpine rm /s/oauth-credentials.json</code>, then
+            restart it: <code className="bg-muted rounded px-1 py-0.5 text-xs">docker compose restart companion-signed-in</code>. A new code then appears here.
           </span>
         </p>
       )}

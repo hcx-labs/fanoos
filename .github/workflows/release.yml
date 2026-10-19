@@ -63,11 +63,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [core, youtube, crunchyroll]
+        image: [core, youtube, crunchyroll, companion-signed-in]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: v${{ needs.version.outputs.version }}
+          # companion-signed-in is built from vendor/invidious-companion.
+          submodules: true
 
       - name: Image name
         id: name
@@ -123,7 +125,7 @@ jobs:
             echo "## Images"
             echo
             echo '```'
-            for image in core youtube crunchyroll; do echo "ghcr.io/$owner/fanoos-$image:$version"; done
+            for image in core youtube crunchyroll companion-signed-in; do echo "ghcr.io/$owner/fanoos-$image:$version"; done
             echo '```'
             echo
             echo 'Platforms: `linux/amd64`, `linux/arm64`. See `compose.yaml` to run the whole stack.'

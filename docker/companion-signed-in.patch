@@ -1,0 +1,71 @@
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -134,25 +134,64 @@
+         },
+     );
+ } else if (innertubeClientOauthEnabled) {
++    // Fanoos: no cache is passed to Innertube, so cacheCredentials() keeps nothing and every
++    // restart asked for a new code. The sign-in is saved to a file instead, and the pending
++    // code is written next to it for the Fanoos YouTube backend to show in Settings.
++    const oauthDir = `${config.cache.directory}/youtubei.js`;
++    const credentialsFile = `${oauthDir}/oauth-credentials.json`;
++    const pendingFile = `${oauthDir}/oauth-pending.json`;
++    await Deno.mkdir(oauthDir, { recursive: true });
++    await Deno.remove(pendingFile).catch(() => {});
++    const saveCredentials = () =>
++        Deno.writeTextFile(
++            credentialsFile,
++            JSON.stringify(innertubeClient.session.oauth.oauth2_tokens),
++            { mode: 0o600 },
++        );
++    let saved;
++    try {
++        saved = JSON.parse(await Deno.readTextFile(credentialsFile));
++    } catch {
++        // Not signed in yet.
++    }
++
+     // Fired when waiting for the user to authorize the sign in attempt.
+     innertubeClient.session.on("auth-pending", (data) => {
+         console.log(
+             `[INFO] [OAUTH] Go to ${data.verification_url} in your browser and enter code ${data.user_code} to authenticate.`,
+         );
++        Deno.writeTextFileSync(
++            pendingFile,
++            JSON.stringify({
++                url: data.verification_url,
++                code: data.user_code,
++                expiresAt: Date.now() + data.expires_in * 1000,
++            }),
++            { mode: 0o644 },
++        );
+     });
+     // Fired when authentication is successful.
+     innertubeClient.session.on("auth", () => {
+         console.log("[INFO] [OAUTH] Sign in successful!");
++        Deno.remove(pendingFile).catch(() => {});
+     });
+     // Fired when the access token expires.
+     innertubeClient.session.on("update-credentials", async () => {
+         console.log("[INFO] [OAUTH] Credentials updated.");
+-        await innertubeClient.session.oauth.cacheCredentials();
++        await saveCredentials();
+     });
+ 
+-    // Attempt to sign in and then cache the credentials
+-    await innertubeClient.session.signIn();
+-    await innertubeClient.session.oauth.cacheCredentials();
++    // Sign in with the saved credentials, or ask for a new code if there are none (or Google
++    // no longer accepts them), then save them.
++    try {
++        await innertubeClient.session.signIn(saved);
++    } catch (err) {
++        if (!saved) throw err;
++        console.log("[WARN] [OAUTH] Saved sign-in was rejected, signing in again.", err);
++        await Deno.remove(credentialsFile).catch(() => {});
++        await innertubeClient.session.signIn();
++    }
++    await saveCredentials();
+     // Resolve promise for tests
+     tokenMinterReadyResolve?.();
+ }
