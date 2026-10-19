@@ -2,7 +2,7 @@
   "name": "@fanoos/crunchyroll",
   "private": true,
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.2.3",
   "description": "Crunchyroll backend for Fanoos (provider protocol v1).",
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch src/index.ts",
