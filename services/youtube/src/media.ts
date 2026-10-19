@@ -10,6 +10,7 @@ import { sign, verifySignature } from "./crypto.ts";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
 import { thumbnailFallbacks } from "./image-fallbacks.ts";
+import { companionCaptionPath, fetchCaptionVtt, validCaptionSelection, type CaptionSelection } from "./captions.ts";
 
 const imageHosts = /^(i\d?\.ytimg\.com|yt\d?\.ggpht\.com|yt\d?\.googleusercontent\.com|lh\d\.googleusercontent\.com)$/;
 
@@ -40,7 +41,32 @@ function target(kind: "img", u: string | undefined, s: string | undefined, hosts
   return url;
 }
 
+export function proxyCaption(video: string, label: string, instance: CompanionInstance): string {
+  const selection: CaptionSelection = { video, label, instance, expires: Date.now() + 6 * 3600_000 };
+  const p = encode(JSON.stringify(selection));
+  return `/public/captions?p=${p}&s=${sign(`captions:${p}`)}`;
+}
+
+export function captionTarget(p: string | undefined, s: string | undefined): CaptionSelection {
+  if (!p || p.length > 8192 || !s || !verifySignature(`captions:${p}`, s)) throw fail(403, "Bad signature.");
+  let value: unknown;
+  try { value = JSON.parse(decode(p)); } catch { throw fail(403, "Invalid caption selector."); }
+  if (!validCaptionSelection(value)) throw fail(403, "Invalid or expired caption selector.");
+  return value;
+}
+
 export const mediaRoutes = new Hono<ServiceEnv>();
+
+mediaRoutes.get("/captions", async (c) => {
+  const selection = captionTarget(c.req.query("p"), c.req.query("s"));
+  const base = selection.instance === "s" ? (signedInReady() ? signedInUrl : "") : config.companion.url;
+  if (!base) throw fail(403, "Caption instance unavailable.");
+  try {
+    const text = await fetchCaptionVtt(`${base}${companionCaptionPath(selection, config.companion.secret)}`, c.req.raw.signal,
+      { authorization: `Bearer ${config.companion.secret}` });
+    return c.body(text, 200, { "content-type": "text/vtt; charset=utf-8", "cache-control": "private, no-store", "x-content-type-options": "nosniff" });
+  } catch { throw fail(502, "Captions unavailable."); }
+});
 
 mediaRoutes.get("/img", async (c) => {
   const url = target("img", c.req.query("u"), c.req.query("s"), imageHosts);

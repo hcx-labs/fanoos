@@ -47,7 +47,7 @@ import { channelAbout, channelContinuation, channelPage, comments, replies, sear
 import { mediaRoutes, proxyImage } from "./media.ts";
 import { getSettings, setSetting } from "./settings.ts";
 import { resumeSignedIn, signedInState, signOutSignedIn, startSignedIn } from "./signed-in.ts";
-import { dashManifest, playability } from "./stream.ts";
+import { dashManifest, playability, subtitles } from "./stream.ts";
 
 const info = (): BackendInfo => ({
   protocol: 1,
@@ -226,7 +226,7 @@ v1.get("/calendar", async (c) => c.json(await upstream("your calendar", () => ca
 v1.get("/continue", (c) => c.json([]));
 
 /** Bump when the manifest or its segment-URL format changes. */
-const MANIFEST_VERSION = 3;
+const MANIFEST_VERSION = 4;
 
 // Old detail entries used a guessed hq720 URL instead of YouTube's full-size artwork.
 const details = new SharedCache<Omit<VideoDetail, "stream">>("video-thumbnails-v2");
@@ -271,7 +271,7 @@ v1.get("/videos/:id", async (c) => {
       ? { unavailable: { code: "live", reason: "Live streams can't be played here yet." } }
       : play.ok
         ? // The version bypasses manifests browsers cached under an older stream-URL scheme.
-          { dash: `/public/videos/${id}/manifest.mpd?v=${MANIFEST_VERSION}` }
+          { dash: `/public/videos/${id}/manifest.mpd?v=${MANIFEST_VERSION}`, subtitles: await subtitles(id, play.instance) }
         : { unavailable: { code: play.code, reason: play.reason } },
   };
   return c.json(body);

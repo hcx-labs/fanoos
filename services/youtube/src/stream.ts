@@ -12,7 +12,9 @@
  */
 import { SharedCache } from "./cache.ts";
 import { config } from "./config.ts";
-import { type CompanionInstance, proxyCompanion } from "./media.ts";
+import { type CompanionInstance, proxyCompanion, proxyCaption } from "./media.ts";
+import { captionSubtitles, type CaptionTrack } from "./captions.ts";
+import { audioMetadata, xmlEscape } from "./audio-metadata.ts";
 import { getSettings } from "./settings.ts";
 import { signedInReady, signedInUrl } from "./signed-in.ts";
 
@@ -34,7 +36,12 @@ async function playerStatus(instance: CompanionInstance, id: string): Promise<St
     signal: AbortSignal.timeout(30_000),
   }).catch(() => null);
   if (!res?.ok) return null;
-  return ((await res.json()) as { playabilityStatus?: Status }).playabilityStatus ?? null;
+  const player = await res.json() as PlayerResponse;
+  // Reuse this response for captions and the manifest instead of asking the companion twice.
+  if (player.playabilityStatus?.status === "OK") {
+    await playerCache.setMany([[`${instance}:${id}`, player]]).catch(() => {});
+  }
+  return player.playabilityStatus ?? null;
 }
 
 const isAgeGate = (s: Status) => s.status === "LOGIN_REQUIRED" && /age|inappropriate/i.test(s.reason ?? "");
@@ -100,10 +107,14 @@ type Format = {
   audioTrack?: { id: string; displayName: string; audioIsDefault: boolean };
 };
 
-type PlayerResponse = { streamingData?: { adaptiveFormats?: Format[] } };
+type PlayerResponse = {
+  playabilityStatus?: Status;
+  streamingData?: { adaptiveFormats?: Format[] };
+  captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] } };
+};
 // Stream URLs expire after ~6 hours, so stale copies are only served for an hour.
-const playerCache = new SharedCache<PlayerResponse>("player", { staleSeconds: 3600 });
-const manifests = new SharedCache<string>("manifest", { staleSeconds: 3600 });
+const playerCache = new SharedCache<PlayerResponse>("player-captions-v2", { staleSeconds: 3600 });
+const manifests = new SharedCache<string>("manifest-audio-v2", { staleSeconds: 3600 });
 
 /** The companion's player response: deciphered stream URLs carrying the PO token. */
 function playerResponse(instance: CompanionInstance, id: string) {
@@ -119,7 +130,14 @@ function playerResponse(instance: CompanionInstance, id: string) {
   });
 }
 
-const xmlEscape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+/** Caption metadata is optional: its failure must never make a playable video unavailable. */
+export async function subtitles(id: string, instance: CompanionInstance) {
+  try {
+    const player = await playerResponse(instance, id);
+    return captionSubtitles(player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [],
+      (label) => proxyCaption(id, label, instance));
+  } catch { return []; }
+}
 /**
  * YouTube labels VP9 as just "vp9" (or "vp9.2" for HDR). Browsers' capability checks
  * need the full form (profile.level.bitDepth), or players drop the track, losing 1440p/4K.
@@ -164,7 +182,9 @@ export function dashManifest(id: string, base: string): Promise<string> {
       const [mime, family] = key.split("|") as [string, string];
       const video = mime.startsWith("video/");
       const track = list[0]!.audioTrack;
-      const lang = track?.id.split(".")[0];
+      const audio = audioMetadata(track);
+      const lang = video ? undefined : audio.lang;
+      const label = video ? family : audio.label;
       const reps = list
         .sort((a, b) => b.bitrate - a.bitrate)
         .map((f) => {
@@ -183,8 +203,9 @@ export function dashManifest(id: string, base: string): Promise<string> {
             .join("\n");
         });
       return [
-        `    <AdaptationSet id="${setId++}" mimeType="${mime}" contentType="${video ? "video" : "audio"}" subsegmentAlignment="true" subsegmentStartsWithSAP="1"${lang ? ` lang="${xmlEscape(lang)}"` : ""} label="${family}">`,
-        track ? `      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="${track.audioIsDefault ? "main" : "alternate"}"/>` : "",
+        `    <AdaptationSet id="${setId++}" mimeType="${mime}" contentType="${video ? "video" : "audio"}" subsegmentAlignment="true" subsegmentStartsWithSAP="1"${lang ? ` lang="${xmlEscape(lang)}"` : ""} label="${xmlEscape(label)}">`,
+        video ? "" : `      <Label>${xmlEscape(label)}</Label>`,
+        video ? "" : `      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="${audio.role}"/>`,
         ...reps,
         "    </AdaptationSet>",
       ]

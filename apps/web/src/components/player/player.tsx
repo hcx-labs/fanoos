@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { Link, useNavigate } from "react-router";
 import JASSUB from "jassub";
+import { toast } from "sonner";
 import jassubWorker from "jassub/dist/jassub-worker.js?url";
 import jassubWasm from "jassub/dist/jassub-worker.wasm?url";
 import jassubFont from "jassub/dist/default.woff2?url";
@@ -44,6 +45,8 @@ import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { effectiveQuality } from "@/lib/quality";
 import { createWatchMeter, type WatchMeter } from "@/lib/watch-meter";
+
+import { initialSubtitle, subtitleKey, attachVtt, audioKey, audioOptions, preferredAudio, type AudioOption } from "@/lib/player-tracks";
 
 export type PlayerHandle = { seek: (time: number) => void; play: () => void };
 
@@ -119,24 +122,6 @@ export const languageLabel = (locale: string) => {
   return where ? `${name} (${where})` : name;
 };
 
-/**
- * The subtitle track to start with: the viewer's saved choice ("" means off), else their
- * browser language when the audio isn't already in it.
- */
-function initialSubtitle(tracks: Subtitle[], saved: string | undefined, audio: string | undefined): string {
-  if (saved !== undefined) return tracks.some((t) => t.locale === saved) ? saved : "";
-  const langs = navigator.languages ?? [navigator.language];
-  const base = (l: string) => l.split("-")[0]!.toLowerCase();
-  if (audio && langs.some((l) => base(l) === base(audio))) return "";
-  for (const lang of langs) {
-    const exact = tracks.find((t) => t.locale.toLowerCase() === lang.toLowerCase());
-    if (exact) return exact.locale;
-    const near = tracks.find((t) => base(t.locale) === base(lang));
-    if (near) return near.locale;
-  }
-  return "";
-}
-
 export function Player({ video, stream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
   const owner = useProfile()?.owner ?? false;
@@ -156,15 +141,29 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const ambientOn = settings.ambient && !protectedStream;
   // Read once: where playback last stopped (saved to the account, or by the service itself).
   const [resumeAt] = useState(() => startAt ?? getLocalState().progress[key] ?? video.progress ?? 0);
-  // Subtitles (styled .ass, rendered by JASSUB over the video) and other audio languages.
+  // ASS and native VTT subtitles, episode dubs and in-stream audio languages.
   const subtitles = stream.subtitles ?? noSubtitles;
   const savedLanguages = useStore((s) => s.languages);
-  const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, savedLanguages?.subtitles, video.episode?.audio));
+  const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, savedLanguages?.subtitles, video.episode?.audio, settings.captions, navigator.languages));
   const versions = video.episode?.versions ?? [];
-  const chooseSubtitle = useCallback((locale: string) => {
-    setSubtitle(locale);
-    actions.languages({ subtitles: locale });
-  }, []);
+  const chooseSubtitle = useCallback((id: string) => {
+    setSubtitle(id);
+    actions.languages({ subtitles: subtitles.find((t) => subtitleKey(t) === id)?.locale ?? "" });
+  }, [subtitles]);
+  useEffect(() => {
+    setSubtitle(initialSubtitle(subtitles, getLocalState().languages?.subtitles, video.episode?.audio, settings.captions, navigator.languages));
+    // Reset only for a new subtitle list/default, not when persisting a manual/ASR choice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtitles, settings.captions, video.episode?.audio]);
+  const [streamAudio, setStreamAudio] = useState<AudioOption[]>([]);
+  const [activeAudio, setActiveAudio] = useState("");
+  const chooseStreamAudio = useCallback((key: string) => {
+    const option = streamAudio.find((o) => o.key === key);
+    if (!option || !dash.current) return;
+    if (option.language) actions.languages({ audio: option.language });
+    // dash.js switches the adaptation in-place: no seek, navigation, or play call.
+    dash.current.setCurrentTrack(option.track);
+  }, [streamAudio]);
   const switchAudio = useCallback(
     (id: string, audio: string) => {
       actions.languages({ audio });
@@ -272,6 +271,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     setFailure(null);
     setHeights([]);
     setPlayingHeight(null);
+    setStreamAudio([]);
+    setActiveAudio("");
     if (stream.dash) {
       const player = MediaPlayer().create();
       let disposed = false;
@@ -297,7 +298,20 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         placed = true;
         if (el.currentTime < start - 1) player.seek(start);
       };
+      const syncAudio = () => {
+        if (disposed) return;
+        setStreamAudio(versions.length > 1 ? [] : audioOptions(player.getTracksFor("audio")));
+        const current = player.getCurrentTrackFor("audio");
+        setActiveAudio(current ? audioKey(current) : "");
+      };
+      player.on("currentTrackChanged", syncAudio);
+      player.on("trackChangeRendered", syncAudio);
       player.on("streamInitialized", async () => {
+        const options = audioOptions(player.getTracksFor("audio"));
+        const currentAudio = player.getCurrentTrackFor("audio");
+        const audio = preferredAudio(options, versions.length > 1 ? undefined : getLocalState().languages?.audio, currentAudio ? audioKey(currentAudio) : undefined);
+        if (audio && (!currentAudio || audioKey(currentAudio) !== audio.key)) player.setCurrentTrack(audio.track);
+        syncAudio();
         // One video track per codec: pick the first the device decodes efficiently.
         const tracks = player.getTracksFor("video");
         const order = await preference;
@@ -352,11 +366,15 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.dash, stream.progressive]);
 
-  // Styled subtitles: JASSUB draws them on a canvas laid over the video.
-  const track = subtitles.find((t) => t.locale === subtitle);
+  // VTT uses native text tracks; only ASS needs the styled JASSUB canvas.
+  const track = subtitles.find((t) => subtitleKey(t) === subtitle);
   useEffect(() => {
     const el = media.current;
     if (!el || !track) return;
+    if (track.format === "vtt") return attachVtt(el, track, () => {
+      toast.error("Subtitles couldn't be loaded", { description: "Turn subtitles off and select the track again to retry." });
+    });
+    if (track.format !== "ass") return;
     let renderer: JASSUB | null = null;
     try {
       renderer = new JASSUB({
@@ -591,7 +609,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           chooseSubtitle(
             subtitle
               ? ""
-              : subtitles.find((t) => t.locale === savedLanguages?.subtitles)?.locale || initialSubtitle(subtitles, undefined, undefined) || subtitles[0]!.locale,
+              : initialSubtitle(subtitles, savedLanguages?.subtitles || undefined, undefined, true, navigator.languages) || subtitleKey(subtitles[0]!),
           );
           flash(Captions, subtitle ? "Off" : "On");
           break;
@@ -940,7 +958,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
               )}
               {subtitles.length > 0 ? (
                 <Control
-                  label={subtitle ? `Subtitles: ${subtitles.find((t) => t.locale === subtitle)?.label ?? subtitle} (c)` : "Subtitles off (c)"}
+                  label={subtitle ? `Subtitles: ${subtitles.find((t) => subtitleKey(t) === subtitle)?.label ?? subtitle} (c)` : "Subtitles off (c)"}
                   onClick={() => setMenu((m) => (m === "subtitles" ? null : "subtitles"))}
                   pressed={Boolean(subtitle)}
                 >
@@ -960,6 +978,9 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     subtitles={subtitles}
                     subtitle={subtitle}
                     onSubtitle={chooseSubtitle}
+                    streamAudio={streamAudio}
+                    activeAudio={activeAudio}
+                    onStreamAudio={chooseStreamAudio}
                     versions={versions}
                     audio={video.episode?.audio}
                     onAudio={switchAudio}
@@ -1041,6 +1062,9 @@ function SettingsPanel({
   subtitle,
   onSubtitle,
   versions,
+  streamAudio,
+  activeAudio,
+  onStreamAudio,
   audio,
   onAudio,
   heights,
@@ -1055,6 +1079,9 @@ function SettingsPanel({
   subtitles: Subtitle[];
   subtitle: string;
   onSubtitle: (locale: string) => void;
+  streamAudio: AudioOption[];
+  activeAudio: string;
+  onStreamAudio: (key: string) => void;
   versions: { audio: string; id: string; original?: boolean }[];
   audio?: string;
   onAudio: (id: string, audio: string) => void;
@@ -1078,17 +1105,17 @@ function SettingsPanel({
     >
       {view === "main" && (
         <>
-          {versions.length > 1 && (
+          {(versions.length > 1 || streamAudio.length > 1) && (
             <button type="button" className={row} onClick={() => onView("audio")}>
               <AudioLines className="size-4 text-white/70" /> Audio
-              <span className="ml-auto truncate text-white/60">{audio ? languageLabel(audio) : "Original"}</span>
+              <span className="ml-auto truncate text-white/60">{streamAudio.find((o) => o.key === activeAudio)?.label ?? (audio ? languageLabel(audio) : "Original")}</span>
               <ChevronRight className="size-4 text-white/40" />
             </button>
           )}
           {subtitles.length > 0 && (
             <button type="button" className={row} onClick={() => onView("subtitles")}>
               <Captions className="size-4 text-white/70" /> Subtitles
-              <span className="ml-auto truncate text-white/60">{subtitle ? (subtitles.find((t) => t.locale === subtitle)?.label ?? subtitle) : "Off"}</span>
+              <span className="ml-auto truncate text-white/60">{subtitle ? (subtitles.find((t) => subtitleKey(t) === subtitle)?.label ?? subtitle) : "Off"}</span>
               <ChevronRight className="size-4 text-white/40" />
             </button>
           )}
@@ -1172,9 +1199,9 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Subtitles
           </button>
           <div className="my-1 h-px bg-white/10" />
-          {[{ locale: "", label: "Off" }, ...subtitles].map((t) => (
-            <button key={t.locale || "off"} type="button" className={row} onClick={() => onSubtitle(t.locale)}>
-              <Check className={cn("size-4", subtitle === t.locale ? "text-brand" : "opacity-0")} />
+          {[{ id: "", locale: "", label: "Off" }, ...subtitles].map((t) => (
+            <button key={subtitleKey(t) || "off"} type="button" role="menuitemradio" aria-checked={subtitle === subtitleKey(t)} className={row} onClick={() => onSubtitle(subtitleKey(t))}>
+              <Check className={cn("size-4", subtitle === subtitleKey(t) ? "text-brand" : "opacity-0")} />
               {t.label}
             </button>
           ))}
@@ -1186,6 +1213,12 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Audio
           </button>
           <div className="my-1 h-px bg-white/10" />
+          {streamAudio.map((option) => (
+            <button key={option.key} type="button" role="menuitemradio" aria-checked={activeAudio === option.key} className={row} onClick={() => activeAudio !== option.key && onStreamAudio(option.key)}>
+              <Check className={cn("size-4", activeAudio === option.key ? "text-brand" : "opacity-0")} />
+              {option.label}
+            </button>
+          ))}
           {[...versions]
             .sort((a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)) || languageLabel(a.audio).localeCompare(languageLabel(b.audio)))
             .map((v) => (
