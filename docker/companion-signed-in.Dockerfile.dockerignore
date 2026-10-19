@@ -1,0 +1,13 @@
+# Overrides the root .dockerignore for this image only.
+# The other images still exclude vendor; this build needs the companion submodule.
+**
+!vendor/
+!vendor/invidious-companion/
+!vendor/invidious-companion/deno.jsonc
+!vendor/invidious-companion/deno.lock
+!vendor/invidious-companion/src/
+!vendor/invidious-companion/src/**
+!vendor/invidious-companion/config/
+!vendor/invidious-companion/config/**
+!docker/
+!docker/companion-signed-in.patch
