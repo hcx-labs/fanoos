@@ -54,8 +54,10 @@ The runtime is pinned to [castLabs Electron for Content Security](https://github
 Widevine initializes in the background so offline/YouTube use doesn't depend on CDM
 installation. Production Windows/macOS Crunchyroll **streaming** requires the appropriate
 [VMP signing](https://github.com/castlabs/electron-releases/wiki/EVS), separate from OS
-signing/notarization. Crunchyroll offline downloads are disabled: current browser CDMs
-no longer provide persistent licenses; saving encrypted segments alone is insufficient.
+signing/notarization. Crunchyroll and Plex offline downloads are not implemented. The desktop download
+queue currently supports YouTube only; this app does not implement persistent DRM
+licenses for offline Crunchyroll playback. Saving encrypted segments alone does not
+provide an offline playback license.
 
 Before distributing, configure icons, OS signing/notarization, and release updates.
 Verify password/OIDC login, passkeys (especially macOS Touch ID), and signed Crunchyroll
@@ -115,8 +117,8 @@ and fail if signing or verification fails; authenticate before building.
 in afterPack, before Apple signing; Windows uses afterSign, after Authenticode.
 Linux needs no VMP signature. The normal `pack` command remains available for
 local development and explicitly reports that production DRM signing is skipped.
-Do not use `--persistent`: current ECS no longer supports persistent DRM licenses.
-YouTube file downloads do not require persistent DRM licensing.
+This packaging flow requests streaming signatures; it does not implement offline
+DRM playback. YouTube file downloads do not require persistent DRM licensing.
 
 After signing, validate a Crunchyroll episode with the local connected account:
 CDM availability alone does not prove production licensing or decryption succeeds.
