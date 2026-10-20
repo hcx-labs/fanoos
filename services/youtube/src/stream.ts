@@ -10,6 +10,7 @@
  * manifests and rewrites every segment URL to its signed /public/media proxy, so
  * browsers only ever talk to Fanoos.
  */
+import type { DownloadPlan, DownloadTrack } from "@tube/shared";
 import { SharedCache } from "./cache.ts";
 import { config } from "./config.ts";
 import { type CompanionInstance, proxyCompanion, proxyCaption } from "./media.ts";
@@ -97,6 +98,7 @@ type Format = {
   url?: string;
   mimeType: string;
   bitrate: number;
+  contentLength?: string;
   width?: number;
   height?: number;
   fps?: number;
@@ -224,4 +226,36 @@ export function dashManifest(id: string, base: string): Promise<string> {
       "",
     ].join("\n");
   });
+}
+
+/** Resolve a fresh set of tracks for a desktop download or resumed attempt. */
+export async function downloadPlan(id: string, base: string): Promise<DownloadPlan> {
+  const play = await playability(id);
+  if (!play.ok) throw new Error(play.reason);
+  // Playback caches may hold expiring URLs; download retries must obtain new ones.
+  await playerCache.delete(`${play.instance}:${id}`);
+  const response = await playerResponse(play.instance, id);
+  const formats = (response.streamingData?.adaptiveFormats ?? []).filter((f) => f.url && f.initRange && f.indexRange && Number(f.approxDurationMs) > 0);
+  const tracks: DownloadTrack[] = formats.flatMap((f) => {
+    const mimeType = f.mimeType.split(";")[0]!;
+    if (!/^(video|audio)\/(mp4|webm)$/.test(mimeType)) return [];
+    const audio = audioMetadata(f.audioTrack);
+    const upstream = new URL(f.url!);
+    const bytes = Number(f.contentLength);
+    return [{
+      id: `${f.itag}${f.audioTrack ? `-${f.audioTrack.id}` : ""}`,
+      kind: mimeType.startsWith("video/") ? "video" : "audio",
+      mimeType, codecs: fullCodec(/codecs="([^"]+)"/.exec(f.mimeType)?.[1] ?? "", f.height),
+      bandwidth: f.bitrate, bytes: Number.isSafeInteger(bytes) && bytes > 0 ? bytes : undefined,
+      revision: upstream.searchParams.get("lmt") ?? undefined,
+      width: f.width, height: f.height, fps: f.fps,
+      language: audio.lang, label: mimeType.startsWith("video/") ? `${f.height}p · ${codecFamily(/codecs="([^"]+)"/.exec(f.mimeType)?.[1] ?? "")}${f.fps && f.fps > 30 ? ` · ${f.fps}fps` : ""}` : audio.label,
+      default: !f.audioTrack || f.audioTrack.audioIsDefault,
+      sampleRate: Number(f.audioSampleRate) || undefined, channels: f.audioChannels,
+      initRange: `${f.initRange!.start}-${f.initRange!.end}`, indexRange: `${f.indexRange!.start}-${f.indexRange!.end}`,
+      url: proxyCompanion(`/companion/videoplayback?${upstream.searchParams}&host=${upstream.host}`, base, play.instance),
+    } satisfies DownloadTrack];
+  });
+  if (!tracks.some((t) => t.kind === "video") || !tracks.some((t) => t.kind === "audio")) throw new Error("No downloadable on-demand tracks available.");
+  return { duration: Math.max(...formats.map((f) => Number(f.approxDurationMs))) / 1000, tracks, subtitles: await subtitles(id, play.instance) };
 }

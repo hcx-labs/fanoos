@@ -15,6 +15,7 @@ import {
   ThumbsUp,
   Wand2,
 } from "lucide-react";
+import { DownloadButton } from "@/components/download-button";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
 import { ChannelAvatar } from "@/components/channel-avatar";
@@ -159,7 +160,7 @@ export function WatchPage() {
   );
 }
 
-function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel; onSeek: (t: number) => void }) {
+export function VideoInfo({ video, channel, onSeek, offline = false }: { video: Video; channel: Channel; onSeek: (t: number) => void; offline?: boolean }) {
   const settings = useSettings();
   const title = useVideoTitle(video);
   const later = useStore((s) => s.watchLater.includes(itemKey(video)));
@@ -268,12 +269,13 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
             </Link>
             {channel.subscribers ? <p className="text-muted-foreground text-xs">{formatCount(channel.subscribers)} subscribers</p> : null}
           </div>
-          <div className="ml-2">
+          {!offline && <div className="ml-2">
             <SubscribeControl channel={channel} />
-          </div>
+          </div>}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {!offline && <div className="flex flex-wrap items-center gap-2">
+          <DownloadButton video={video} />
           {ratings && (
           <div className="relative">
             <ButtonGroup>
@@ -332,7 +334,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
           >
             {later ? <CircleCheck className="text-brand-strong" /> : <ListPlus />} <span className="hidden @4xl:inline">{later ? "Saved" : "Save"}</span>
           </Button>
-        </div>
+        </div>}
       </div>
 
       <div className="bg-secondary/70 mt-5 rounded-2xl p-4 text-sm">
@@ -367,7 +369,7 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
           </button>
         )}
       </div>
-      {(video.episode?.versions?.length ?? 0) > 1 && <AudioVersions video={video} />}
+      {!offline && (video.episode?.versions?.length ?? 0) > 1 && <AudioVersions video={video} />}
     </section>
   );
 }

@@ -1,0 +1,61 @@
+{
+  "name": "@fanoos/desktop",
+  "version": "0.3.3",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check setup.js && node --check downloads.cjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "build:offline": "npm run build:offline --workspace @tube/web",
+    "prepack": "npm run build:offline",
+    "predist": "npm run build:offline",
+    "test": "node --test downloads.test.cjs scripts/evs-sign.test.cjs",
+    "predev": "npm run build:offline",
+    "test:e2e": "node scripts/test-offline.mjs",
+    "pack:drm": "node scripts/package-drm.cjs",
+    "prepack:drm": "npm run build:offline"
+  },
+  "devDependencies": {
+    "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "app.fanoos.desktop",
+    "productName": "Fanoos",
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "setup.html",
+      "setup.js",
+      "downloads.cjs",
+      "offline-dist/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo"
+    },
+    "electronVersion": "44.1.0+wvcus",
+    "afterPack": "scripts/evs-after-pack.cjs",
+    "afterSign": "scripts/evs-after-sign.cjs"
+  },
+  "license": "AGPL-3.0-or-later",
+  "description": "Fanoos desktop client"
+}

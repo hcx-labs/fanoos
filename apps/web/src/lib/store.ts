@@ -7,6 +7,7 @@
 import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { api, RequestError } from "./api";
+import { resumePosition, mergeOfflineProgress } from "./progress";
 import { storageKey } from "./brand";
 import { defaultSubtitleStyle, normalizeSubtitleStyle, type SubtitleStyle } from "./subtitle-style";
 import type { SegmentCategory, Video } from "./types";
@@ -192,11 +193,13 @@ const tooMuch = () =>
 
 async function save() {
   saveTimer = undefined;
+  if (window.fanoosDesktop?.offline) { window.fanoosDesktop.downloads?.saveState(state); return; }
   const body = saveBody();
   if (body === null) return tooMuch();
   try {
     const res = await fetch("/api/me/data", { method: "PUT", headers: { "content-type": "application/json" }, body, credentials: "same-origin" });
     if (!res.ok) throw new RequestError(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    window.fanoosDesktop?.downloads?.saveState(state);
   } catch (error) {
     // Refused for its size (a stricter server): trim old entries and try again, while there are any.
     if (error instanceof RequestError && error.code === "too_large") {
@@ -236,6 +239,7 @@ addEventListener("pagehide", () => {
   if (saveTimer === undefined || !loaded) return;
   window.clearTimeout(saveTimer);
   saveTimer = undefined;
+  if (window.fanoosDesktop?.offline) { window.fanoosDesktop.downloads?.saveState(state); return; }
   const body = saveBody();
   if (body === null) return;
   void fetch("/api/me/data", {
@@ -256,13 +260,29 @@ export async function loadAppData() {
     const raw = localStorage.getItem(LEGACY_KEY);
     legacy = raw ? (JSON.parse(raw) as Partial<State>) : null;
   } catch {}
-  state = normalize(data ?? legacy);
+  const offline = await window.fanoosDesktop?.downloads?.state().catch(() => null);
+  const pending = offline?.dirty ? offline.data as Partial<State> | null : null;
+  const merged = pending ? {
+    ...(data ?? legacy),
+    progress: mergeOfflineProgress(data?.progress ?? {}, offline?.pendingProgress ?? {}),
+    history: [...new Map([...(data?.history ?? []), ...Object.values(offline?.pendingHistory ?? {})].map((h) => [h.id, h])).values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200),
+  } : data ?? legacy;
+  state = normalize(merged);
   loaded = true;
   emit();
-  if (!data && legacy) await save();
+  if (pending || (!data && legacy)) await save();
+  else window.fanoosDesktop?.downloads?.saveState(state);
   try {
     localStorage.removeItem(LEGACY_KEY);
   } catch {}
+}
+
+/** The bundled desktop player reads the same preferences and saves positions locally. */
+export async function loadOfflineAppData() {
+  const saved = await window.fanoosDesktop?.downloads?.state().catch(() => null);
+  state = normalize(saved?.data as Partial<State> | null);
+  loaded = true;
+  emit();
 }
 
 /** Forget the previous account's data in memory (on sign-out). */
@@ -337,7 +357,8 @@ export const actions = {
       const progress = { ...s.progress };
       // Re-insert so key order tracks recency.
       delete progress[id];
-      if (seconds >= 10 && !(duration && seconds > duration - 20)) progress[id] = Math.floor(seconds);
+      const position = resumePosition(seconds, duration);
+      if (position !== undefined) progress[id] = position;
       // Keep the most recent 300 entries.
       const keys = Object.keys(progress);
       if (keys.length > 300) for (const key of keys.slice(0, keys.length - 300)) delete progress[key];

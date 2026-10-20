@@ -11,6 +11,7 @@ import { formatDuration } from "@/lib/format";
 import { paths } from "@/lib/paths";
 import { openLink, pathFor, useLinkPreview } from "@/lib/open-link";
 import { suggest } from "@/lib/source";
+import { searchDownloads, useDownloads } from "@/lib/downloads";
 import { actions, useStore } from "@/lib/store";
 
 /**
@@ -25,7 +26,10 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
   const inputRef = useRef<HTMLInputElement>(null);
   const searches = useStore((s) => s.searches);
   const [query, setQuery] = useState("");
-  const suggestions = suggest(query);
+  const offline = !!window.fanoosDesktop?.offline;
+  const { library } = useDownloads();
+  const downloads = searchDownloads(library?.items.filter((item) => item.status === "complete") ?? [], query);
+  const suggestions = suggest(offline ? "" : query);
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -35,7 +39,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
     onOpenChange(false);
     navigate(path);
   };
-  const link = useLinkPreview(query);
+  const link = useLinkPreview(offline ? "" : query);
   const search = (q: string) => {
     if (!q.trim()) return;
     // A pasted link (YouTube, Crunchyroll…) opens what it points to instead of searching for it.
@@ -63,10 +67,21 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search videos and channels</DialogDescription>
         <Command shouldFilter={false} loop>
-          <CommandInput ref={inputRef} placeholder="Search everything… or paste a link" value={query} onValueChange={setQuery} />
-          <CommandList className="max-h-[min(60vh,28rem)]">
-            <CommandEmpty>Press Enter to search everywhere.</CommandEmpty>
-            {query.trim() && (
+          <CommandInput ref={inputRef} aria-label={offline ? "Search downloaded videos" : "Search everything"} placeholder={offline ? "Search downloaded videos" : "Search everything… or paste a link"} value={query} onValueChange={setQuery} />
+          <CommandList className="max-h-[min(60vh,28rem)]" label={offline ? "Downloaded search results" : "Search results"}>
+            {offline && (
+              <CommandGroup heading="Downloads">
+                {downloads.map((download) => (
+                  <CommandItem className={item} key={download.id} value={download.id} onSelect={() => go(`/watch/${download.id}`)}>
+                    <img src={download.video.thumbnail} alt="" className="aspect-video w-12 rounded object-cover" />
+                    <span className="truncate">{download.video.title}</span>
+                    <span className="text-muted-foreground ml-auto text-xs tabular-nums">{formatDuration(download.video.duration)}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            <CommandEmpty>{offline ? "No saved videos match your search." : "Press Enter to search everywhere."}</CommandEmpty>
+            {!offline && query.trim() && (
               <CommandGroup>
                 {link ? (
                   <CommandItem className={item} value={`open:${query}`} onSelect={() => search(query)}>
@@ -94,7 +109,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
                 )}
               </CommandGroup>
             )}
-            {!query.trim() && searches.length > 0 && (
+            {!offline && !query.trim() && searches.length > 0 && (
               <CommandGroup heading="Recent searches">
                 {searches.map((q) => (
                   <CommandItem key={q} value={`recent:${q}`} onSelect={() => search(q)} className={cn(item, "group/item")}>
@@ -115,7 +130,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
                 ))}
               </CommandGroup>
             )}
-            {suggestions.channels.length > 0 && (
+            {!offline && suggestions.channels.length > 0 && (
               <>
                 <CommandSeparator />
                 <CommandGroup heading="Following">
@@ -129,7 +144,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
                 </CommandGroup>
               </>
             )}
-            {suggestions.videos.length > 0 && (
+            {!offline && suggestions.videos.length > 0 && (
               <>
                 <CommandSeparator />
                 <CommandGroup heading="From your feed">
@@ -146,7 +161,7 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
           </CommandList>
           <div className="text-muted-foreground flex items-center gap-2 border-t px-3 py-2 text-xs">
             <Lock className="size-3.5" />
-            {link
+            {offline ? "Search stays on this device." : link
               ? "Links are looked up through your Fanoos server."
               : "Suggestions are computed on this device. Nothing is sent until you press Enter."}
           </div>

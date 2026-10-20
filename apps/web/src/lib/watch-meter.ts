@@ -29,7 +29,7 @@ export function createWatchMeter(video: Video) {
   let marked = false;
 
   const send = (beat: WatchBeat, closing: boolean) =>
-    fetch("/api/me/watch", {
+    window.fanoosDesktop?.offline ? Promise.resolve() : fetch("/api/me/watch", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(beat),

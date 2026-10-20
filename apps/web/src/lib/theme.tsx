@@ -35,6 +35,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle("dark", resolved === "dark");
   }, [resolved]);
 
+  useEffect(() => {
+    window.fanoosDesktop?.setTheme(theme);
+  }, [theme]);
+
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);
     try {

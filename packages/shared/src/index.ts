@@ -355,3 +355,5 @@ export type WatchStats = {
   /** When tracking started (ms), for "since …". */
   since?: number;
 };
+
+export type * from "./downloads.ts";

@@ -1,0 +1,139 @@
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import { Readable } from 'node:stream';
+import { mkdtempSync, writeFileSync, createWriteStream } from 'node:fs';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
+const root = mkdtempSync('/tmp/fanoos-offline-e2e-');
+const upstream = process.env.FANOOS_E2E_SERVER || 'http://localhost:5180';
+const binary = process.env.FANOOS_E2E_BINARY || fileURLToPath(new URL('../dist/mac-arm64/Fanoos.app/Contents/MacOS/Fanoos', import.meta.url));
+const server = 'http://localhost:5195';
+writeFileSync(`${root}/desktop.json`, JSON.stringify({ server }));
+const proxy = http.createServer(async (req, res) => {
+  try {
+    const headers = { ...req.headers }; delete headers.host; delete headers.connection; headers.origin = upstream;
+    const response = await fetch(`${upstream}${req.url}`, { method: req.method, headers, body: ['GET','HEAD'].includes(req.method) ? undefined : Readable.toWeb(req), duplex: 'half', redirect: 'manual' });
+    const out = Object.fromEntries(response.headers); delete out['content-encoding']; delete out['transfer-encoding'];
+    if (response.headers.getSetCookie().length) out['set-cookie'] = response.headers.getSetCookie();
+    res.writeHead(response.status, out);
+    if (response.body) Readable.fromWeb(response.body).pipe(res); else res.end();
+  } catch { if(!res.headersSent) res.writeHead(502); res.end(); }
+});
+await new Promise(r=>proxy.listen(5195,'127.0.0.1',r));
+let proc, ws, next=0;const pending=new Map();
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout ${method}`))},90000);pending.set(id,m=>{clearTimeout(timer);m.error?reject(m.error):resolve(m.result)});ws.send(JSON.stringify({id,method,params}))});
+const evaluate=async expression=>{const result=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);return result.result.value};
+const wait=async(expression,ms=45000)=>{const end=Date.now()+ms;while(Date.now()<end){try{const value=await evaluate(expression);if(value)return value}catch{}await pause(250)}throw new Error(`Timed out: ${expression}`)};
+function check(ok,message){if(!ok)throw new Error(message);console.log('PASS:',message)}
+async function launch(){
+  proc=spawn(binary,['--remote-debugging-port=9334'],{env:{...process.env,FANOOS_DESKTOP_DATA_DIR:root},stdio:['ignore','pipe','pipe']});
+  const log=createWriteStream(`${root}/electron.log`,{flags:'a'});proc.stdout.pipe(log);proc.stderr.pipe(log);
+  let target;for(let i=0;i<80;i++){try{const tabs=await(await fetch('http://localhost:9334/json/list')).json();target=tabs.find(t=>t.type==='page');if(target)break}catch{}await pause(250)}if(!target)throw new Error('Electron did not start');
+  ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){pending.get(m.id)?.(m);pending.delete(m.id)}};
+  await send('Page.enable');await send('Runtime.enable');
+}
+async function stop(){ws?.close();if(proc?.exitCode===null){proc.kill('SIGTERM');await Promise.race([once(proc,'exit'),pause(5000)])}}
+try{
+  await launch();await wait(`!!window.fanoosDesktop?.downloads`);
+  if (process.env.FANOOS_E2E_WIDEVINE === '1') {
+    check(await evaluate(`(async()=>{await window.fanoosDesktop.readyForProtectedPlayback();const access=await navigator.requestMediaKeySystemAccess('com.widevine.alpha',[{initDataTypes:['cenc'],videoCapabilities:[{contentType:'video/mp4; codecs="avc1.640028"'}]}]);const keys=await access.createMediaKeys();return !!keys})()`),'desktop CDM readiness bridge supports a real Widevine MediaKeys instance');
+  }
+  const email=`offline-e2e-${Date.now()}@example.test`;
+  const status=await evaluate(`(async()=>{const r=await fetch('/api/auth/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Offline Test',email:${JSON.stringify(email)},password:crypto.randomUUID()})});return r.status})()`);
+  check(status===200,'registered isolated test profile');
+  await wait(`!!document.querySelector('form') || !!document.querySelector('header')`);
+  await send('Page.navigate',{url:server+'/watch/youtube/jNQXAC9IVRw'});
+  await wait(`Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Download')`,90000);
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Download').click()`);
+  await wait(`document.querySelectorAll('[role="dialog"] [data-slot="select-trigger"]').length===2`,90000);
+  await evaluate(`document.querySelector('[role="dialog"] [data-slot="select-trigger"]').click()`);
+  await wait(`!!document.querySelector('[data-slot="select-content"] [role="option"]')`);
+  const options=await evaluate(`Array.from(document.querySelectorAll('[role="option"]')).map(o=>o.textContent)`);
+  check(options.length>0,'shared quality Select populated from real YouTube tracks');
+  await pause(150);
+  check(await evaluate(`(()=>{const trigger=document.querySelector('[role="dialog"] [data-slot="select-trigger"]').getBoundingClientRect();const content=document.querySelector('[data-slot="select-content"]');return content.dataset.side==='bottom' && content.getBoundingClientRect().top>=trigger.bottom})()`),'quality dropdown opens below its trigger');
+  const option=options.find(label=>label.startsWith('360p')&&label.includes('h264'))||options.at(-1);
+  await evaluate(`Array.from(document.querySelectorAll('[role="option"]')).find(o=>o.textContent===${JSON.stringify(option)}).click()`);
+  await evaluate(`document.querySelectorAll('[role="dialog"] [data-slot="select-trigger"]')[1].click()`);
+  await wait(`!!document.querySelector('[data-slot="select-content"] [role="option"]')`);
+  check(true,'audio picker uses shared Select');
+  await evaluate(`(document.querySelector('[role="option"][data-state="checked"]')||document.querySelector('[role="option"]')).click()`);
+  await evaluate(`document.querySelector('[role="dialog"] [data-slot="checkbox"]')?.click()`);
+  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(b=>b.textContent==='Download').click()`);
+  await wait(`!document.querySelector('[role="dialog"]')`,90000);
+  const item=await wait(`window.fanoosDesktop.downloads.list().then(l=>l.items.find(i=>['complete','failed'].includes(i.status)))`,120000);
+  check(item.status==='complete',`real YouTube download completed${item.error?': '+item.error:''}`);
+  console.log(JSON.stringify({id:item.id,bytes:item.received,quality:item.quality,dataDirectory:root}));
+  await send('Page.navigate',{url:server+'/downloads'});await wait(`!!document.querySelector('[aria-label^="Play "]')`);
+  const screenshot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(`${root}/online.png`,Buffer.from(screenshot.data,'base64'));
+  check(true,'online Downloads library shows completed video');
+  check(await evaluate(`!!document.querySelector('[aria-label="Device storage usage"]')?.getAttribute('aria-valuetext')`),'segmented storage meter exposes disk usage, Fanoos downloads and free space');
+  check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]')`),'Downloads is always in the online sidebar');
+  check(await evaluate(`!document.querySelector('main [data-slot="select-trigger"]') && !document.querySelector('main input') && getComputedStyle(document.querySelector('article').parentElement).display==='grid'`),'Downloads uses a grid without storage selector or search field');
+  check(await evaluate(`(()=>{const play=document.querySelector('[aria-label^="Play "]');const remove=document.querySelector('[aria-label^="Remove "]');const thumbnail=play.parentElement;const p=play.getBoundingClientRect(), t=thumbnail.getBoundingClientRect(), r=remove.getBoundingClientRect();return getComputedStyle(play).borderWidth==='0px' && Math.abs(p.width-t.width)<1 && Math.abs(p.height-t.height)<1 && r.right<t.right && r.top>t.top && !Array.from(document.querySelectorAll('main button')).some(b=>b.textContent==='Play')})()`),'thumbnail overlay fills its bounds and Delete sits inside the top right');
+  await evaluate(`window.downloadsMainBeforeNavigation=document.querySelector('main');document.querySelector('main section h2 a').click()`);
+  await wait(`location.search.includes('group=') && document.querySelector('h1')?.textContent==='jawed'`);
+  check(await evaluate(`!!document.querySelector('[aria-label="Downloaded channels and shows"] a[aria-current="page"]')`),'sidebar opens the selected channel with an active state and heading');
+  check(await evaluate(`window.downloadsMainBeforeNavigation!==document.querySelector('main') && getComputedStyle(document.querySelector('main')).animationName!=='none'`),'channel heading navigation restarts the page animation');
+  check(await evaluate(`!!document.querySelector('main [data-slot=avatar]') && document.querySelector('main').textContent.includes('1 saved video') && document.querySelector('article').classList.contains('flex-col')`),'selected channel has an avatar, saved-video summary and video grid');
+  await evaluate(`document.querySelector('[aria-label^="Remove "]').click()`);
+  await wait(`!!document.querySelector('[role="dialog"]') && document.querySelector('[role="dialog"]').textContent.includes('Remove download?')`);
+  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(b=>b.textContent==='Cancel').click()`);
+  await wait(`!document.querySelector('[role="dialog"]')`);
+  check(true,'shared removal Dialog cancels without deleting the download');
+  await evaluate(`document.querySelector('[aria-label^="Play "]').click()`);
+  await wait(`location.pathname.startsWith('/downloads/') && document.querySelector('video')?.readyState>=2`);
+  check(await evaluate(`!window.fanoosDesktop.offline && !!document.querySelector('aside a[href$="/downloads"]')`),'online local playback keeps normal app navigation');
+  await stop();
+  proxy.closeAllConnections();await new Promise(r=>proxy.close(r));
+  check(true,'disconnected only the isolated test server; user stack remains running');
+  await launch();
+  await wait(`location.protocol==='fanoos-offline:' && !!document.querySelector('[aria-label^="Play "]')`);
+  check(true,'cold launch without server opens bundled offline library');
+  check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]') && !!document.querySelector('.top-bar')`),'offline shell preserves sidebar and top bar');
+  await evaluate(`document.querySelector('aside a[href$="/library"]').click()`);
+  await wait(`document.querySelector('main').textContent.includes('Offline')`);
+  check(true,'server-dependent pages show Offline');
+  await evaluate(`Array.from(document.querySelectorAll('.top-bar button')).find(b=>b.textContent.includes('Search')).click()`);
+  await wait(`!!document.querySelector('input[aria-label="Search downloaded videos"]')`);
+  await evaluate(`(()=>{const input=document.querySelector('input[aria-label="Search downloaded videos"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'zoo');input.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  await wait(`document.querySelector('[aria-label="Downloaded search results"]').textContent.includes('Me at the zoo')`);
+  check(true,'offline search finds local downloaded metadata');
+  check(await evaluate(`!!document.querySelector('[data-slot="command-input"]') && !!document.querySelector('[data-slot="command-item"]')`),'offline search uses shared Command palette');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await wait(`document.querySelector('video')?.readyState>=2`);
+  await evaluate(`document.querySelector('aside a[href$="/downloads"]').click()`);
+  await wait(`!!document.querySelector('[aria-label^="Play "]')`);
+  await evaluate(`document.querySelector('[aria-label^="Play "]').click()`);
+  await wait(`document.querySelector('video')?.readyState>=2`);
+  const detail=await evaluate(`({duration:document.querySelector('video').duration,src:document.querySelector('video').currentSrc,subtitles:document.querySelector('video').textTracks.length})`);
+  check(detail.duration>18 && detail.duration<21,'offline DASH audio/video load with expected duration');
+  await evaluate(`document.querySelector('video').play()`);await pause(1300);
+  check(await evaluate(`document.querySelector('video').currentTime>0.5 && !document.querySelector('video').paused`),'offline video plays');
+  await evaluate(`document.querySelector('video').currentTime=12`);await pause(1000);
+  check(await evaluate(`document.querySelector('video').currentTime>=12`),'offline byte-range seeking works');
+  const shot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(`${root}/offline.png`,Buffer.from(shot.data,'base64'));
+  await evaluate(`document.querySelector('video').pause()`);await pause(1600);
+  check(await evaluate(`window.fanoosDesktop.downloads.state().then(s=>s.dirty && s.pendingProgress['youtube/jNQXAC9IVRw']>=12)`),'offline playback position persists for reconnect sync');
+  const cap=await evaluate(`window.fanoosDesktop.downloads.detail(${JSON.stringify(item.id)}).then(d=>d.stream.subtitles.length)`);
+  check(cap>0,'selected captions downloaded alongside media');
+  await evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))`);
+  await wait(`document.querySelector('video')?.textTracks[0]?.cues?.length>0`);
+  check(true,'downloaded captions load without the server');
+  check(await evaluate(`!document.querySelector('main').textContent.includes('Available offline') && !!document.querySelector('main section')`),'offline watch page exposes saved metadata without redundant availability text');
+  await send('Emulation.setDeviceMetricsOverride',{width:800,height:700,deviceScaleFactor:1,mobile:false});
+  check(await evaluate(`document.documentElement.scrollWidth<=innerWidth && getComputedStyle(document.querySelector('aside')).display!=='none'`),'offline sidebar and header fit minimum desktop width');
+  await new Promise(r=>proxy.listen(5195,'127.0.0.1',r));
+  await evaluate(`document.querySelector('[aria-label="Reconnect"]').click()`);
+  await wait(`location.protocol==='http:' && !!document.querySelector('aside a[href$="/downloads"]')`);
+  await wait(`fetch('/api/me/data').then(r=>r.json()).then(s=>s.data?.progress?.['youtube/jNQXAC9IVRw']>=12)`);
+  check(true,'offline watch position syncs to server after reconnect');
+  console.log('ALL ELECTRON END-TO-END CHECKS PASSED');
+  console.log('Screenshots and test profile:',root);
+}catch(error){
+  console.error(error.message||error);console.error('Debug directory:',root);
+  try{console.error((await evaluate(`document.body.innerText`)).slice(-2000))}catch{}
+  process.exitCode=1;
+}finally{await stop();if(proxy.listening){proxy.closeAllConnections();proxy.close()} }

@@ -344,6 +344,23 @@
   }
 }
 
+/* The keyed route content enters once; the shell and same-page player updates stay put.
+ * No fill-forwards: the transform must stop creating a containing block after entry,
+ * so fixed player controls and sticky page sections keep their normal behavior.
+ */
+.page-transition {
+  animation: page-enter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-transition { animation: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -353,4 +370,26 @@
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Integrate Fanoos's own header with the desktop window frame. */
+html[data-desktop] .top-bar { -webkit-app-region: drag; }
+html[data-desktop] .top-bar :is(a, button, input, select, textarea, [role="button"]) { -webkit-app-region: no-drag; }
+html[data-desktop="win32"] .window-top-bar { padding-right: 152px; }
+html[data-desktop="darwin"] .window-top-bar {
+  /* Reserve the native traffic lights while keeping search visually centered. */
+  padding-inline: 24px;
+}
+html[data-desktop="darwin"] .window-top-bar > div:first-child {
+  padding-left: 72px;
+}
+@media (max-width: 1023px) {
+  html[data-desktop="darwin"] .window-top-bar { padding-right: 24px; display: flex; }
+  html[data-desktop="darwin"] .window-top-bar > div { flex-shrink: 0; }
+  html[data-desktop="darwin"] .window-top-bar nav { display: none; }
+}
+
+/* Desktop windows retain their navigation at the minimum supported window width. */
+@media (min-width: 800px) and (max-width: 1023px) {
+  html[data-desktop] .channel-rail { display: flex; width: 208px; }
 }

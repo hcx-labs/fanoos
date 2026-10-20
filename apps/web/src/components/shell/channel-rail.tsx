@@ -1,5 +1,6 @@
+import { DownloadedChannels } from "@/components/shell/downloaded-channels";
 import { useState } from "react";
-import { Link, NavLink } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { ChevronDown, Settings } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 /** Persistent left rail on wide screens: navigation and what the viewer follows (channels and shows). */
 export function ChannelRail() {
+  const downloaded = useLocation().pathname.startsWith("/downloads");
   const muted = useStore((s) => s.muted);
   const source = useSource();
   const state = useData(() => source.following(), [source.key]);
@@ -26,7 +28,7 @@ export function ChannelRail() {
 
   return (
     // Nav and footer stay put; only the channel list scrolls, within the space left over.
-    <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 flex-col px-3 pt-2 pb-4 lg:flex">
+    <aside className="channel-rail sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 flex-col px-3 pt-2 pb-4 lg:flex">
       <nav aria-label="Primary" className="space-y-0.5">
         {[...nav, { to: "/settings", label: "Settings", icon: Settings, end: false }].map(({ to, label, icon: Icon, end }) => (
           <NavLink
@@ -47,6 +49,7 @@ export function ChannelRail() {
         ))}
       </nav>
 
+      {downloaded ? <DownloadedChannels /> : <>
       <div className="mt-8 mb-2 flex items-center justify-between px-3">
         <h2 className="text-sm font-semibold">Following</h2>
         <Link to="/following" className="text-muted-foreground hover:text-foreground text-xs">
@@ -118,6 +121,7 @@ export function ChannelRail() {
         </button>
       )}
 
+      </>}
       <p className="text-muted-foreground mt-auto shrink-0 px-3 pt-6 font-mono text-[11px]" title={`Built ${new Date(__BUILD_TIME__).toLocaleString()}`}>
         {brand.name.toLowerCase()} v{__APP_VERSION__} · {__COMMIT__}
       </p>

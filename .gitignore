@@ -7,3 +7,7 @@ dist
 apps/server/data/
 services/*/data/
 ctrld/*.toml
+
+apps/desktop/offline-dist/
+
+apps/desktop/.venv-evs/

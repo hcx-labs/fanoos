@@ -47,7 +47,7 @@ import { channelAbout, channelContinuation, channelPage, comments, replies, sear
 import { mediaRoutes, proxyImage } from "./media.ts";
 import { getSettings, setSetting } from "./settings.ts";
 import { resumeSignedIn, signedInState, signOutSignedIn, startSignedIn } from "./signed-in.ts";
-import { dashManifest, playability, subtitles } from "./stream.ts";
+import { downloadPlan, dashManifest, playability, subtitles } from "./stream.ts";
 
 const info = (): BackendInfo => ({
   protocol: 1,
@@ -275,6 +275,13 @@ v1.get("/videos/:id", async (c) => {
         : { unavailable: { code: play.code, reason: play.reason } },
   };
   return c.json(body);
+});
+
+v1.get("/videos/:id/download", async (c) => {
+  const id = videoId(c.req.param("id"));
+  const detail = await details.get(id, () => videoDetail(id));
+  if (detail.video.live || detail.video.upcoming) throw fail(400, "Downloads are available for on-demand videos only.");
+  return c.json(await upstream("download options", () => downloadPlan(id, c.get("base"))));
 });
 
 pub.get("/videos/:id/manifest.mpd", async (c) => {
