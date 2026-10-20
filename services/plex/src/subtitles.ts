@@ -4,6 +4,7 @@ import type { Subtitle } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { SharedCache } from "../../kit/src/cache.ts";
 import { seal, open } from "./crypto.ts";
+import { selecting, selectionKey } from "./selection.ts";
 import { request, serverFor } from "./client.ts";
 import type { PlexItem, PlexPart, Server } from "./types.ts";
 
@@ -63,25 +64,55 @@ export async function loadSubtitle(server: Server, ticket: Pick<Ticket, "key" | 
   if (!/^\d{2}:\d{2}:\d{2},\d{3} --> /m.test(body)) throw fail(502, "Plex returned an invalid text subtitle.");
   return `WEBVTT\n\n${body.replace(/\r\n?/g, "\n").replace(/^(\d{2}:\d{2}:\d{2}),(\d{3})( --> \d{2}:\d{2}:\d{2}),(\d{3})/gm, "$1.$2$3.$4")}\n`;
  }
+ return selecting(selectionKey(server, ticket.part), async () => {
  const session = randomBytes(12).toString("hex");
  const params = subtitleParams(ticket.key, ticket.stream, session);
  const signal = AbortSignal.timeout(90_000);
+ let previous = 0, changed = false;
+ const metadata = async (signal: AbortSignal) => {
+  const response = await request(server, `/library/metadata/${ticket.key}`, { signal });
+  if (!response.ok) throw fail(502, "Plex could not read this subtitle track. Reload the video and try again.");
+  const data = await response.json() as { MediaContainer: { Metadata?: PlexItem[] } };
+  return data.MediaContainer.Metadata?.[0]?.Media?.flatMap((media, mediaIndex) => (media.Part ?? []).map((part, partIndex) => ({ part, mediaIndex, partIndex }))).find(({ part }) => Number(part.id) === ticket.part);
+ };
  try {
-  // Match Plex Web's direct-play path: negotiate first, then start only subtitles.
-  // DirectPlayStreamSelection makes this session-local; no PUT changes account preferences.
+  const selectedPart = await metadata(signal);
+  if (!selectedPart?.part.Stream?.some((s) => s.streamType === 3 && Number(s.id) === ticket.stream)) throw fail(502, "This subtitle track is no longer available. Reload the video.");
+  params.set("mediaIndex", String(selectedPart.mediaIndex)); params.set("partIndex", String(selectedPart.partIndex));
+  previous = Number(selectedPart.part.Stream.find((s) => s.streamType === 3 && s.selected)?.id ?? 0);
+  if (previous !== ticket.stream) {
+   // PMS ignores subtitleStreamID for unselected embedded tracks (notably SRT).
+   // Select only subtitles, then restore the preference once the isolated fetch finishes.
+   changed = true;
+   const response = await request(server, `/library/parts/${ticket.part}?subtitleStreamID=${ticket.stream}`, { method: "PUT", signal });
+   await response.body?.cancel();
+   if (!response.ok) throw fail(502, "Plex could not select the requested subtitle track.");
+  }
   const response = await request(server, `/video/:/transcode/universal/decision?${params}`, { signal });
   if (!response.ok) throw fail(502, "Plex could not prepare this subtitle track.");
-  const { MediaContainer: decision } = await response.json() as { MediaContainer: { generalDecisionCode?: number; transcodeDecisionCode?: number; Metadata?: PlexItem[] } };
-  if (Number(decision.generalDecisionCode ?? 0) >= 2000 || Number(decision.transcodeDecisionCode ?? 0) >= 2000) throw fail(502, "Plex rejected subtitle playback for this item.");
-  const selected = decision.Metadata?.[0]?.Media?.[0]?.Part?.find((p) => Number(p.id) === Number(ticket.part))?.Stream?.find((s) => s.streamType === 3 && s.selected);
+  const { MediaContainer: decision } = await response.json() as { MediaContainer: { generalDecisionCode?: number; mdeDecisionCode?: number; transcodeDecisionCode?: number; Metadata?: PlexItem[] } };
+  if ([decision.generalDecisionCode, decision.mdeDecisionCode, decision.transcodeDecisionCode].some((code) => Number(code ?? 0) >= 2000)) throw fail(502, "Plex rejected subtitle playback for this item.");
+  const selected = decision.Metadata?.[0]?.Media?.flatMap((media) => media.Part ?? []).find((p) => Number(p.id) === ticket.part)?.Stream?.find((s) => s.streamType === 3 && s.selected);
   if (!selected || String(selected.id) !== String(ticket.stream)) throw fail(502, "Plex could not select the requested subtitle track.");
   const text = await subtitleText(await request(server, `/subtitles/:/transcode/universal/start?${params}`, { signal }));
   if (!text.includes("[Script Info]") || !text.includes("[Events]")) throw fail(502, "Plex returned an invalid ASS subtitle.");
   return text;
  } finally {
-  // This ID belongs only to the subtitle request, never the video's playback session.
+  // Only stop our subtitle session; never the video's playback session.
   await request(server, `/video/:/transcode/universal/stop?session=${session}`, { signal: AbortSignal.timeout(5000) }).then((r) => r.body?.cancel()).catch(() => {});
+  if (changed) {
+   try {
+    const current = await metadata(AbortSignal.timeout(5000));
+    // Don't overwrite a newer selection made by a different Plex client.
+    if (Number(current?.part.Stream?.find((s) => s.streamType === 3 && s.selected)?.id ?? 0) === ticket.stream) {
+     const response = await request(server, `/library/parts/${ticket.part}?subtitleStreamID=${previous}`, { method: "PUT", signal: AbortSignal.timeout(5000) });
+     await response.body?.cancel();
+     if (!response.ok) throw Error("Plex rejected preference restoration");
+    }
+   } catch { console.warn("Plex subtitle playback completed, but the previous subtitle preference could not be restored."); }
+  }
  }
+ });
 }
 
 async function cached(ticket: Ticket): Promise<string> {

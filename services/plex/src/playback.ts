@@ -4,6 +4,7 @@ import type { PlaybackSource, Stream } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { seal, open } from "./crypto.ts";
 import { request, serverFor } from "./client.ts";
+import { selecting, selectionKey } from "./selection.ts";
 import { subtitleTracks, subtitleRoutes } from "./subtitles.ts";
 import { rewriteManifest } from "./manifest.ts";
 import type { PlexItem, Server } from "./types.ts";
@@ -11,17 +12,6 @@ type Ticket = { ref: string; server: string; path?: string; session?: string; ke
 import { SharedCache } from "../../kit/src/cache.ts";
 const artwork = new SharedCache<{ type: string; body: string }>("artwork", { ttlSeconds: 86400, staleSeconds: 86400 });
 const ttl = 8 * 3600;
-// Plex stores stream selection per account/part. Keep selection and session creation together.
-const selections = new Map<string, Promise<void>>();
-async function selecting<T>(key: string, run: () => Promise<T>): Promise<T> {
- const previous = selections.get(key) ?? Promise.resolve();
- let release!: () => void;
- const gate = new Promise<void>((resolve) => { release = resolve; });
- const pending = previous.then(() => gate);
- selections.set(key, pending);
- await previous;
- try { return await run(); } finally { release(); if (selections.get(key) === pending) selections.delete(key); }
-}
 export function playback(ref: string, server: Server, item: PlexItem, audio?: number): Stream {
  const media = item.Media?.[0]; const part = media?.Part?.[0];
  if (!part) return { unavailable: { code: "unplayable", reason: "Plex could not find a playable media file." } };
@@ -104,7 +94,7 @@ mediaRoutes.get("/play/:ticket/manifest.mpd", async (c) => {
   token = seal(ticket, ttl);
  }
  const resource = startPath(ticket);
- const res = await selecting(`${ticket.ref}:${ticket.server}:${ticket.part}`, async () => {
+ const res = await selecting(selectionKey(server, ticket.part), async () => {
  if (ticket.part && (Boolean(ticket.audio) || ticket.subtitle !== undefined)) {
   const selection = new URLSearchParams({ ...(ticket.audio ? { audioStreamID: String(ticket.audio) } : {}), ...(ticket.subtitle !== undefined ? { subtitleStreamID: String(ticket.subtitle) } : {}) });
   const selected = await request(server, `/library/parts/${ticket.part}?${selection}`, { method: "PUT" });

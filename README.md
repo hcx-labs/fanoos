@@ -168,8 +168,9 @@ credentials; the authorization can also be revoked in Plex's Authorized Devices.
 - Embedded text subtitles use Plex's native subtitle-only endpoint after media
   decision negotiation. Plex returns ASS for Fanoos's existing renderer; external
   subtitles use Plex's stream endpoint. No media-file scan or backend FFmpeg is
-  involved, and subtitle requests do not change audio/video quality or saved track
-  preferences. Subtitle text uses the shared Redis cache for seven days. Image
+  involved. Embedded tracks are selected temporarily while the subtitle-only
+  session runs, then the previous subtitle preference is restored. These requests
+  share the playback selection lock and never change audio/video quality. Subtitle text uses the shared Redis cache for seven days. Image
   subtitles retain the explicit Plex burn-in option.
 
 The backend must be able to reach each Plex server from its own network (including
