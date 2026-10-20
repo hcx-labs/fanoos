@@ -8,6 +8,7 @@ COPY packages/shared/package.json packages/shared/
 COPY services/kit/package.json services/kit/
 COPY services/youtube/package.json services/youtube/
 COPY services/crunchyroll/package.json services/crunchyroll/
+COPY services/plex/package.json services/plex/
 RUN npm ci --omit=dev --workspace @fanoos/crunchyroll --workspace @fanoos/kit
 
 FROM node:24-slim

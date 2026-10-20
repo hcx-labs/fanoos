@@ -22,13 +22,13 @@ let recentVideos: Video[] = [];
 const v = (backend: string | undefined) => `/v/${backend ?? "youtube"}`;
 
 const source = {
-  async following() {
-    const channels = await api<Channel[]>("/following");
+  async following(options: { rail?: boolean; backend?: string; kind?: "movies" | "shows" | "channels"; catalog?: boolean } = {}) {
+    const channels = await api<Channel[]>(`/following${qs({ rail: options.rail ? "1" : undefined, backend: options.backend, kind: options.kind, catalog: options.catalog ? "1" : undefined })}`);
     recentChannels = channels;
     return channels;
   },
-  async feed({ group, accountId, backend }: { group?: string; accountId?: string; backend?: string } = {}) {
-    const videos = await api<Video[]>(`/feed${qs({ group, account: accountId, backend })}`);
+  async feed({ group, accountId, backend, library }: { group?: string; accountId?: string; backend?: string; library?: string } = {}) {
+    const videos = await api<Video[]>(`/feed${qs({ group, account: accountId, backend, library })}`);
     if (!group && !accountId && !backend) recentVideos = videos;
     return videos;
   },
@@ -41,8 +41,8 @@ const source = {
   video: (ref: ItemRef) => api<VideoDetail>(`${v(ref.backend)}/videos/${ref.id}`),
   comments: (ref: ItemRef, sort: CommentSort, next?: string) => api<CommentPage>(`${v(ref.backend)}/videos/${ref.id}/comments${qs({ sort, next })}`),
   replies: (backend: string | undefined, token: string) => api<CommentPage>(`${v(backend)}/comments/replies${qs({ token })}`),
-  channel: (ref: ItemRef, section?: string, options: { next?: string; signal?: AbortSignal; query?: string; sort?: "new" | "popular" } = {}) =>
-    api<ChannelPage>(`${v(ref.backend)}/channels/${ref.id}${qs({ section, next: options.next, q: options.query, sort: options.sort })}`, { signal: options.signal }),
+  channel: (ref: ItemRef, section?: string, options: { next?: string; signal?: AbortSignal; query?: string; sort?: "new" | "popular"; limit?: number; refresh?: boolean } = {}) =>
+    api<ChannelPage>(`${v(ref.backend)}/channels/${ref.id}${qs({ section, next: options.next, q: options.query, sort: options.sort, limit: options.limit ? String(options.limit) : undefined, refresh: options.refresh ? "1" : undefined })}`, { signal: options.signal }),
   search: (query: string, filters: SearchFilters, backend?: string) => api<SearchSection[]>(`/search${qs({ q: query, backend, ...filters })}`),
   /** Several items by key, grouped per backend (Watch later, history). */
   async videos(refs: ItemRef[]) {

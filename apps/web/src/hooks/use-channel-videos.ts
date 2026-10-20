@@ -51,7 +51,7 @@ export function useChannelVideos(ref: ItemRef, section?: string, query = "", sor
     try {
       const data = await source.channel(ref, section, { next: state.data.next, signal: current.controller.signal, query, sort });
       if (current.controller.signal.aborted) return;
-      setResult({ key, state: { status: "ready", data: { ...state.data, videos: appendVideos(state.data.videos, data.videos), next: data.next } } });
+      setResult({ key, state: { status: "ready", data: { ...state.data, channels: state.data.channels ? [...state.data.channels, ...(data.channels ?? []).filter((channel) => !state.data.channels!.some((old) => itemKey(old) === itemKey(channel)))] : undefined, videos: appendVideos(state.data.videos, data.videos), next: data.next } } });
       setMore({ key, loading: false });
     } catch (error) {
       if (!current.controller.signal.aborted) setMore({ key, loading: false, error: error instanceof Error ? error : new Error(String(error)) });

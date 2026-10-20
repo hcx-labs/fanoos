@@ -107,11 +107,11 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
                     {busy === account.id && <Spinner className="size-3" />}
                   </DropdownMenuCheckboxItem>
                 ) : (
-                  <div key={account.id} className="flex items-center gap-2 py-1.5 pr-2 pl-8 text-sm" title="Read-only account">
+                  <DropdownMenuItem key={account.id} onSelect={(event) => event.preventDefault()} className="gap-2">
                     <AccountAvatar account={account} className="size-5" textClassName="text-[9px]" />
                     <span className="flex-1 truncate">{account.label}</span>
                     {following.has(account.id) ? <Check className="text-like size-4" aria-label="Subscribed" /> : <span className="text-muted-foreground text-xs">—</span>}
-                  </div>
+                  </DropdownMenuItem>
                 ),
               )}
             </DropdownMenuGroup>
@@ -125,12 +125,12 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
               <Zap /> Allow actions for {a.label}
             </DropdownMenuItem>
           ))}
-        {backend.info?.urls.channel && (
+        {(channel.url || backend.info?.urls.channel) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <a href={backend.info.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
-                <ExternalLink /> Open on {backend.info.name}
+              <a href={channel.url || backend.info?.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on {backend.info?.name ?? backend.slug}
               </a>
             </DropdownMenuItem>
           </>

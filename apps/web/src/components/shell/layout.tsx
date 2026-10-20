@@ -3,11 +3,12 @@ import { NavLink, Outlet, useLocation } from "react-router";
 import { Search } from "lucide-react";
 import { ChannelRail } from "@/components/shell/channel-rail";
 import { SearchPalette } from "@/components/shell/search-palette";
-import { TopBar, nav, useSearchShortcut } from "@/components/shell/top-bar";
+import { TopBar, useNavigation, useSearchShortcut } from "@/components/shell/top-bar";
 import { cn } from "@/lib/utils";
 import { ArtworkGlowContext, resetArtworkGlow } from "@/lib/artwork-glow";
 
 export function Layout() {
+  const nav = useNavigation();
   const [searchOpen, setSearchOpen] = useSearchShortcut();
   const { pathname, search, state } = useLocation();
   const glow = !pathname.startsWith("/watch");

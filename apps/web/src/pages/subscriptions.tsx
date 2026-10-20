@@ -1,3 +1,8 @@
+import { CatalogToolbar, CatalogPagination, catalogGrid } from "@/components/catalog-toolbar";
+import { SectionBar } from "@/components/section-bar";
+import { useCatalogPageSize } from "@/hooks/use-catalog-page-size";
+import { useCursorPage } from "@/hooks/use-cursor-page";
+import { api, qs } from "@/lib/api";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Download, ExternalLink, Eye, EyeOff, MoreHorizontal, RefreshCw, Search } from "lucide-react";
@@ -33,8 +38,48 @@ import type { Channel, LinkedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
 
-export function SubscriptionsPage() {
-  useTitle("Following");
+export function SubscriptionsPage({ kind }: { kind?: "channels" } = {}) {
+  return kind ? <ChannelsPage /> : <SourcesPage />;
+}
+
+function ChannelsPage() {
+  useTitle("Channels");
+  const source = useSource();
+  const { inFeed, feedBackends } = useAccounts();
+  const youtube = feedBackends.filter((b) => b.kind === "youtube");
+  const [revision, setRevision] = useState(0);
+  const [query, setQuery] = useState("");
+  const [group, setGroup] = useState("all");
+  const [service, setService] = useState("all");
+  const [overrides, setOverrides] = useState<Record<string, string | null>>({});
+  const muted = useStore((s) => s.muted);
+  const pageSize = useCatalogPageSize();
+  const pager = useCursorPage(JSON.stringify([source.key, revision, query, group, service, pageSize]), (next, signal) => api<{ channels: Channel[]; next?: string; total: number; groups: string[] }>(`/following${qs({ kind: "channels", backend: service === "all" ? undefined : service, limit: String(pageSize), next, q: query, group })}`, { signal }));
+  const data = pager.state.data;
+  const groups = data?.groups ?? [];
+  const exportAll = async (format: "opml" | "newpipe") => {
+    try {
+      const channels = await source.following({ kind: "channels" });
+      if (format === "opml") download("subscriptions.opml", opml(channels), "text/x-opml");
+      else download("newpipe-subscriptions.json", JSON.stringify({ app_version: "0.24.0", app_version_int: 990, subscriptions: channels.map((c) => ({ service_id: 0, url: `https://www.youtube.com/channel/${c.id}`, name: c.name })) }, null, 2), "application/json");
+    } catch (e) { toast.error("Export failed", { description: (e as Error).message }); }
+  };
+  const sync = () => toast.promise(Promise.all(inFeed.filter((a) => youtube.some((b) => b.id === a.backendId)).map((a) => accountActions.sync(a.id))).then(() => setRevision((n) => n + 1)), { loading: "Syncing your accounts…", success: "Synced", error: (e: Error) => e.message });
+  return <div className="page">
+    <PageHeader title="Channels" description="The channels you follow, across your connected accounts." actions={<><Button variant="outline" className="rounded-full" onClick={sync}><RefreshCw />Sync now</Button><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-full" disabled={!youtube.length}><Download />Export</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuLabel>Export YouTube subscriptions</DropdownMenuLabel><DropdownMenuItem onSelect={() => void exportAll("opml")}><Download />OPML (feed readers, FreeTube)</DropdownMenuItem><DropdownMenuItem onSelect={() => void exportAll("newpipe")}><Download />NewPipe JSON</DropdownMenuItem></DropdownMenuContent></DropdownMenu></>} />
+    <CatalogToolbar query={query} onQuery={setQuery} label="channels"><ServicePills label="Service" value={service} onChange={setService} options={[{ value: "all", label: "Everything", count: data?.total }, ...youtube.map((b) => ({ value: b.slug, label: backendName(b), color: b.info?.color, count: data?.total }))]} /></CatalogToolbar>
+    {!!groups.length && <ToggleGroup type="single" value={group} onValueChange={(v) => v && setGroup(v)} spacing={1} className="no-scrollbar mt-4 max-w-full overflow-x-auto">{["all", ...groups].map((g) => <ToggleGroupItem key={g} value={g} className="data-[state=on]:bg-foreground data-[state=on]:text-background bg-secondary h-8 rounded-full px-4 text-[13px]">{g === "all" ? "All groups" : g}</ToggleGroupItem>)}</ToggleGroup>}
+    <section aria-label="Followed channels"><SectionBar className="mt-6 mb-4" title="YouTube" detail={data ? `${data.total} followed` : undefined}><CatalogPagination {...pager} loading={pager.state.status === "loading"} label="Channels" /></SectionBar>
+    {pager.state.status === "loading" && <div className={catalogGrid}>{Array.from({ length: pageSize }, (_, i) => <Skeleton key={i} className="h-56 rounded-2xl" />)}</div>}
+    {pager.state.status === "error" && <div className="flex items-center gap-3"><p role="alert" className="text-destructive text-sm">{pager.state.error.message}</p><Button variant="outline" onClick={pager.retry}>Try again</Button></div>}
+    {data && <div className={catalogGrid}>{data.channels.map((channel) => <ChannelTile key={itemKey(channel)} channel={{ ...channel, group: itemKey(channel) in overrides ? overrides[itemKey(channel)] ?? undefined : channel.group }} muted={muted.includes(itemKey(channel))} groups={groups} onGroup={(g) => { setOverrides((old) => ({ ...old, [itemKey(channel)]: g })); void source.setGroup(channel, g).catch((e: Error) => toast.error(e.message)); }} />)}</div>}
+    {data && !data.channels.length && <p className="text-muted-foreground text-sm">No channels match this filter.</p>}
+    </section>
+  </div>;
+}
+
+function SourcesPage({ kind }: { kind?: "channels" } = {}) {
+  useTitle(kind ? "Channels" : "Sources");
   const source = useSource();
   const { inFeed, feedBackends } = useAccounts();
   const [reload, setReload] = useState(0);
@@ -51,8 +96,8 @@ export function SubscriptionsPage() {
   const [service, setService] = useState("all");
 
   const all = useMemo(
-    () => (state.data ?? []).map((c) => ({ ...c, group: keyOf(c) in overrides ? (overrides[keyOf(c)] ?? undefined) : c.group })),
-    [state.data, overrides],
+    () => (state.data ?? []).filter((channel) => !kind || !channel.kind || channel.kind === "channel").map((c) => ({ ...c, group: keyOf(c) in overrides ? (overrides[keyOf(c)] ?? undefined) : c.group })),
+    [state.data, overrides, kind],
   );
   const channels = useMemo(
     () =>
@@ -62,7 +107,8 @@ export function SubscriptionsPage() {
     [all, query, group, service],
   );
   const shows = channels.filter((c) => c.kind === "series");
-  const plain = channels.filter((c) => c.kind !== "series");
+  const libraries = channels.filter((c) => c.kind === "library");
+  const plain = channels.filter((c) => !c.kind || c.kind === "channel");
   const youtube = all.filter((c) => c.backend === "youtube");
   const setGroupFor = (channel: Channel, g: string | null) => {
     setOverrides((o) => ({ ...o, [keyOf(channel)]: g }));
@@ -73,8 +119,8 @@ export function SubscriptionsPage() {
     <div className="relative">
       <div className="page relative">
         <PageHeader
-          title="Following"
-          description={`Every channel and show from your ${inFeed.length} feed ${inFeed.length === 1 ? "account" : "accounts"}, merged into one list. Group them, hide the noisy ones, or export them. Your feed is built only from this list.`}
+          title={kind ? "Channels" : "Sources"}
+          description={kind ? "The channels you follow, across your connected accounts." : "Manage channels, saved shows, and server libraries across your connected accounts."}
           actions={
             <>
             <Button
@@ -166,9 +212,10 @@ export function SubscriptionsPage() {
           </section>
         )}
 
+        {libraries.length > 0 && <section className="mt-8" aria-labelledby="libraries"><h2 id="libraries" className="font-display mb-4 text-xl font-semibold">Libraries <span className="text-muted-foreground text-sm font-normal">{libraries.length}</span></h2><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{libraries.map((channel) => <ChannelTile key={keyOf(channel)} channel={channel} muted={muted.includes(keyOf(channel))} groups={groups} onGroup={(group) => setGroupFor(channel, group)} />)}</div></section>}
         {(plain.length > 0 || state.status === "loading") && (
           <section className="mt-8" aria-labelledby="channels">
-            {shows.length > 0 && (
+            {(shows.length > 0 || libraries.length > 0) && (
               <h2 id="channels" className="font-display mb-4 text-xl font-semibold">
                 Channels <span className="text-muted-foreground text-sm font-normal">{plain.length}</span>
               </h2>
@@ -262,29 +309,14 @@ function ChannelTile({ channel, ...menu }: TileProps & { channel: Channel }) {
   const { byId } = useAccounts();
   const via = (channel.via ?? []).map(byId).filter((a): a is LinkedAccount => a !== undefined);
   return (
-    <article className={cn("bg-card group relative flex flex-col gap-4 rounded-2xl border p-4 transition-colors", muted && "opacity-60")}>
-      <div className="flex items-start gap-3">
-        <ChannelAvatar name={channel.name} src={channel.avatar} ring={channel.unseen > 0} className="size-12" textClassName="text-sm" />
-        <div className="min-w-0 flex-1">
-          <Link to={paths.channel(channel)} className="block truncate font-semibold after:absolute after:inset-0 hover:underline">
-            {channel.name}
-          </Link>
-          <p className="text-muted-foreground truncate text-xs">
-            {channel.unseen > 0 ? `${channel.unseen} new in 48h` : "Nothing new"}
-          </p>
-        </div>
-        <TileMenu channel={channel} {...menu} />
-      </div>
-      <div className="mt-auto flex items-center gap-2">
-        <ServiceMark backend={channel.backend} />
-        {channel.group && <Badge variant="secondary">{channel.group}</Badge>}
-        {muted && <Badge variant="outline">Hidden</Badge>}
-        <span className="ml-auto flex -space-x-1.5" title={`Followed with ${via.map((a) => a.label).join(", ")}`}>
-          {via.map((a) => (
-            <AccountAvatar key={a.id} account={a} className="ring-card size-6 ring-2" textClassName="text-[9px]" />
-          ))}
-        </span>
-      </div>
+    <article className={cn("bg-card group relative flex min-w-0 flex-col items-center rounded-2xl border px-3 pt-5 pb-3 transition-colors hover:bg-muted/40", muted && "opacity-60")}>
+      <TileMenu channel={channel} {...menu} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100" />
+      <Link to={paths.channel(channel)} className="flex w-full flex-col items-center text-center after:absolute after:inset-0">
+        <ChannelAvatar name={channel.name} src={channel.avatar} ring={channel.unseen > 0} className="size-20" textClassName="text-2xl" />
+        <h3 className="mt-3 line-clamp-2 min-h-10 text-sm leading-5 font-semibold">{channel.name}</h3>
+      </Link>
+      <p className={cn("mt-1 text-xs", channel.unseen > 0 ? "text-brand-strong font-medium" : "text-muted-foreground")}>{channel.unseen > 0 ? `${channel.unseen} new in 48h` : "You're caught up"}</p>
+      <div className="mt-3 flex min-h-6 w-full items-center gap-1.5"><ServiceMark backend={channel.backend} />{channel.group && <Badge variant="secondary" className="max-w-20 truncate">{channel.group}</Badge>}{muted && <Badge variant="outline">Hidden</Badge>}<span className="ml-auto flex -space-x-1.5" title={`Followed with ${via.map((a) => a.label).join(", ")}`}>{via.map((a) => <AccountAvatar key={a.id} account={a} className="ring-card size-5 ring-2" textClassName="text-[9px]" />)}</span></div>
     </article>
   );
 }

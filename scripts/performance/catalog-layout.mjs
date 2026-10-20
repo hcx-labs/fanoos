@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { plexFixture } from './plex-fixture.mjs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { send, evaluate, close } from './cdp.mjs';
+const origin = process.env.PERF_URL || 'http://localhost:5180';
+const wait = (condition) => evaluate(`new Promise((resolve,reject)=>{const until=Date.now()+12000;function check(){if(${condition})return resolve(true);if(Date.now()>until)return reject(Error(document.body.innerText));setTimeout(check,50)}check()})`);
+await send('Page.enable');
+await send('Page.addScriptToEvaluateOnNewDocument', { source: readFileSync(new URL('./fixture.js', import.meta.url), 'utf8') + plexFixture });
+await send('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{sessionStorage.setItem('catalog-long','1');const base=window.fetch;window.fetch=async(input,init)=>{const u=new URL(typeof input==='string'?input:input.url,location.href);if(u.pathname==='/api/following'&&u.searchParams.has('kind')){await new Promise(r=>setTimeout(r,2500));if(sessionStorage.getItem('catalog-error'))return Response.json({error:'Library temporarily unavailable'},{status:503});}return base(input,init);};})()` });
+for (const kind of ['shows','movies']) {
+ await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ await send('Page.navigate',{url:origin+'/'+kind});
+ const label = kind === 'shows' ? 'Show library' : 'Movie library';
+ await wait(`!!document.querySelector('[aria-label="Loading ${kind}"]')`);
+ const bounds = await evaluate(`(()=>{const f=document.querySelector('[aria-label="${label}"]').getBoundingClientRect(),s=document.querySelector('[aria-label="Loading ${kind}"]').getBoundingClientRect();return {filterBottom:f.bottom,contentTop:s.top}})()`);
+ assert.ok(bounds.filterBottom < bounds.contentTop, 'Filters must precede all loading content');
+ writeFileSync('/tmp/fanoos-'+kind+'-loading.png',Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await wait(`!document.querySelector('[aria-label="Loading ${kind}"]') && !!document.querySelector('main section a')`);
+ writeFileSync('/tmp/fanoos-'+kind+'-ready.png',Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ assert.equal(await evaluate(`document.querySelectorAll('main section a').length`),15);
+ assert.ok(await evaluate(`window.__catalogRequests.some(r=>r.limit==='15')`));
+ await evaluate(`document.querySelector('main section button[aria-label^="Next"]').click()`);
+ await wait(`document.querySelector('main section nav').textContent.includes('Page 2') && document.querySelectorAll('main section a').length===15`);
+ assert.ok(await evaluate(`window.__catalogRequests.some(r=>r.limit==='15' && r.next==='15')`));
+ await evaluate(`scrollTo(0,450)`);
+ const sticky = await evaluate(`(()=>{const bar=document.querySelector('main [data-section-bar]'),nav=bar.querySelector('nav'),style=getComputedStyle(bar);return {top:bar.getBoundingClientRect().top,background:style.backgroundColor,pointerEvents:style.pointerEvents,navBackground:getComputedStyle(nav).backgroundColor,titleBottom:document.querySelector('h1').getBoundingClientRect().bottom}})()`);
+ assert.equal(Math.round(sticky.top),64);
+ assert.equal(sticky.background,'rgba(0, 0, 0, 0)');
+ assert.equal(sticky.pointerEvents,'none');
+ assert.notEqual(sticky.navBackground,'rgba(0, 0, 0, 0)');
+ assert.ok(sticky.titleBottom<64,'Large title must scroll away');
+ writeFileSync('/tmp/fanoos-'+kind+'-sticky.png',Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await evaluate(`document.querySelector('main section button[aria-label^="Previous"]').click()`);
+ await wait(`document.querySelector('main section nav').textContent.includes('Page 1') && document.querySelectorAll('main section a').length===15`);
+ assert.equal(await evaluate(`Math.round(document.querySelector('main section').getBoundingClientRect().top)`),64);
+
+
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+ await wait(`document.querySelectorAll('main section a').length===6`);
+ assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`),false, 'Catalog must not overflow the viewport');
+ assert.ok(await evaluate(`window.__catalogRequests.some(r=>r.limit==='6' && !r.next)`));
+}
+await evaluate(`sessionStorage.setItem('catalog-error','1')`);
+await send('Page.navigate',{url:origin+'/shows'});
+await wait(`!!document.querySelector('main [role="alert"]')`);
+assert.ok(await evaluate(`!![...document.querySelectorAll('main button')].find(b=>b.textContent==='Try again')`));
+await evaluate(`sessionStorage.removeItem('catalog-error');[...document.querySelectorAll('main button')].find(b=>b.textContent==='Try again').click()`);
+await wait(`!!document.querySelector('main section a')`);
+await evaluate(`sessionStorage.removeItem('catalog-long')`);
+console.log('PASS: Movies/Shows shared loading layout, three-row server requests, next/previous pages, floating sticky pills, mobile resize, error and retry');
+close();

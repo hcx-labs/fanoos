@@ -100,9 +100,15 @@ type Via = { via?: string[]; backend?: string };
 /** Something to follow: a YouTube channel, or a show (series) on a streaming service. */
 export type Channel = Via & {
   id: string;
+  /** Optional provider URL for IDs that need server context. */
+  url?: string;
   provider: ProviderKind;
   /** "series" for shows with seasons and episodes. Defaults to "channel". */
-  kind?: "channel" | "series";
+  kind?: "channel" | "series" | "movie" | "library";
+  libraryType?: "movies" | "shows";
+  /** Most recent catalog activity, as a Unix timestamp in seconds. */
+  lastActivity?: number;
+  year?: number;
   /** Portrait key art (shows). */
   poster?: string;
   name: string;
@@ -142,6 +148,13 @@ export type EpisodeInfo = {
 /** Anything playable: a YouTube video or an episode. */
 export type Video = Via & {
   id: string;
+  kind?: "video" | "movie" | "episode";
+  year?: number;
+  poster?: string;
+  /** Owning library, when provided by a media-server backend. */
+  libraryId?: string;
+  /** Optional provider URL for IDs that need server context. */
+  url?: string;
   provider: ProviderKind;
   title: string;
   /** Community title from DeArrow, when one exists. */
@@ -189,9 +202,28 @@ export type Subtitle = {
   url: string;
   /** "ass" needs a styled renderer; "vtt" plays natively. */
   format: "ass" | "vtt";
+  /** Embedded track rendered by the provider during transcoding. */
+  render?: "server";
+};
+
+export type PlaybackSource = {
+  id: string;
+  label: string;
+  kind: "original" | "transcode";
+  description?: string;
+  height?: number;
+  /** Target or source bitrate in bits per second. */
+  bitrate?: number;
+  mimeType?: string;
+  stream: { dash?: string; progressive?: string; session?: { keepAlive?: string; release?: string; everySeconds?: number } };
 };
 
 export type Stream = {
+  /** Explicit provider choices, e.g. original media versus server transcodes. */
+  sources?: PlaybackSource[];
+  defaultSource?: string;
+  originalAudio?: { label: string; codec: string; mimeType?: string };
+  audioTracks?: { id: string; label: string; locale: string; selected?: boolean; mode?: "original" | "transcode"; codec?: string; mimeType?: string; sources: PlaybackSource[] }[];
   /** DASH manifest URL (adaptive, all qualities). */
   dash?: string;
   /** Encrypted streams: licence server URLs per DRM system, called by the browser's own CDM. */
@@ -217,6 +249,8 @@ export type ChannelAbout = { description: string };
 /** A channel or show page. Shows split into sections (seasons); channels usually have none. */
 export type ChannelPage = {
   channel: Channel;
+  /** Nested channels, such as shows inside a media-server TV library. */
+  channels?: Channel[];
   videos: Video[];
   /** Opaque cursor for the next batch in this channel/section. Absent at the end. */
   next?: string;
