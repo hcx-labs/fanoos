@@ -92,7 +92,8 @@ await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b
 await wait(`document.querySelector('[role="menu"]').textContent.includes('English (ASS)')`);
 await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('English (ASS)')).click()`);
 assert.ok(await evaluate(`document.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent.includes('English (ASS)')`));
-console.log('PASS: Plex reuses existing Audio and Subtitles menus, selects languages and marks server-rendered subtitles as transcodes');
+assert.ok(await evaluate(`document.querySelector('[role="menu"]').textContent.includes('Burned in')`));
+console.log('PASS: Plex reuses existing Audio and Subtitles menus, selects languages and marks embedded subtitles as burned in');
 
 console.log('PASS: Plex TV library grid, nested show navigation, library pagination, episode pagination/deduplication, season switching movie poster cards and dedicated Movies navigation');
 close();

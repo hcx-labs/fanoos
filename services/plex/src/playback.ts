@@ -6,7 +6,7 @@ import { seal, open } from "./crypto.ts";
 import { request, serverFor } from "./client.ts";
 import { rewriteManifest } from "./manifest.ts";
 import type { PlexItem, Server } from "./types.ts";
-type Ticket = { ref: string; server: string; path?: string; session?: string; key?: string; height?: number; bitrate?: number; audio?: number; part?: number; subtitles?: number[]; subtitle?: number };
+type Ticket = { ref: string; server: string; path?: string; session?: string; key?: string; height?: number; bitrate?: number; audio?: number; part?: number; subtitles?: number[]; subtitle?: number; copyVideo?: boolean };
 const ttl = 8 * 3600;
 // Plex stores stream selection per account/part. Keep selection and session creation together.
 const selections = new Map<string, Promise<void>>();
@@ -25,19 +25,25 @@ export function playback(ref: string, server: Server, item: PlexItem, audio?: nu
  const subtitles: Subtitle[] = (part.Stream ?? []).filter((s) => s.streamType === 3).map((s) => ({ id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Subtitles", format: "vtt" as const, ...(!s.key || !["srt", "webvtt", "ass", "ssa", "mov_text"].includes(s.codec || "") ? { render: "server" as const, url: "" } : { url: `/public/subtitle/${seal({ ref, server: server.id, path: `/library/streams/${s.id}?format=vtt` }, ttl)}` }) }));
  const height = media?.videoResolution === "4k" ? 2160 : Number(media?.videoResolution) || media?.height || 1080;
  const sources: PlaybackSource[] = [];
- if (audio === undefined && media?.Part?.length === 1) sources.push({
-  id: "original", kind: "original", label: `Original · ${height}p`, height, bitrate: (media.bitrate ?? 0) * 1000,
-  description: `Direct play · ${[media.container?.toUpperCase(), media.videoCodec?.toUpperCase(), media.audioCodec?.toUpperCase()].filter(Boolean).join(" · ")}`,
-  mimeType: media.container === "mp4" ? "video/mp4" : media.container === "webm" ? "video/webm" : "video/x-matroska",
-  stream: { progressive: `/public/file/${seal({ ref, server: server.id, path: part.key }, ttl)}` },
- });
+ const nativeAudio = ["aac", "mp3"].includes(media?.audioCodec || "");
+ const nativeFile = audio === undefined && ((media?.container === "mp4" && media.videoCodec === "h264" && nativeAudio) || (media?.container === "webm" && ["vp8", "vp9", "av1"].includes(media.videoCodec || "") && ["opus", "vorbis"].includes(media.audioCodec || "")));
+ if (media?.Part?.length === 1 && (nativeFile || media.videoCodec === "h264")) {
+  const session = randomUUID();
+  const ticket = seal({ ref, server: server.id, session, key: item.ratingKey, height, bitrate: Math.max(media.bitrate ?? 0, 100000), audio, part: part.id, copyVideo: true }, ttl);
+  sources.push({
+   id: "original", kind: "original", label: `Original · ${height}p`, height, bitrate: (media.bitrate ?? 0) * 1000,
+   description: nativeFile ? `Direct play · ${[media.container?.toUpperCase(), media.videoCodec?.toUpperCase(), media.audioCodec?.toUpperCase()].filter(Boolean).join(" · ")}` : "Original video · audio converted to AAC stereo",
+   mimeType: nativeFile && media.container === "webm" ? "video/webm" : "video/mp4",
+   stream: nativeFile ? { progressive: `/public/file/${seal({ ref, server: server.id, path: part.key }, ttl)}` } : { dash: `/public/play/${ticket}/manifest.mpd`, session: { keepAlive: `/public/play/${ticket}/ping`, release: `/public/play/${ticket}/release`, everySeconds: 45 } },
+  });
+ }
  for (const [target, kbps] of [[2160, 20000], [1080, 8000], [720, 4000], [480, 1500], [360, 800]] as const) {
   if (target > height) continue;
   const session = randomUUID();
   const ticket = seal({ ref, server: server.id, session, key: item.ratingKey, height: target, bitrate: kbps, audio, part: part.id, subtitles: subtitles.filter((s) => s.render === "server").map((s) => Number(s.id)) }, ttl);
   sources.push({ id: `transcode-${target}`, kind: "transcode", label: `${target}p`, height: target, bitrate: kbps * 1000, description: `Transcode · ${kbps / 1000} Mbps · H.264 / AAC`, stream: { dash: `/public/play/${ticket}/manifest.mpd`, session: { keepAlive: `/public/play/${ticket}/ping`, release: `/public/play/${ticket}/release`, everySeconds: 45 } } });
  }
- const compatible = media?.container === "mp4" && media.videoCodec === "h264" && ["aac", "mp3"].includes(media.audioCodec || "");
+ const compatible = nativeFile || media?.videoCodec === "h264";
  const initial = (compatible ? sources.find((s) => s.id === "original") : undefined) ?? sources.find((s) => s.id === "transcode-1080") ?? sources.find((s) => s.kind === "transcode") ?? sources[0]!;
  const audioTracks = audio === undefined ? (part.Stream ?? []).filter((s) => s.streamType === 2).map((s) => ({ id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Original", selected: Boolean(s.selected), sources: playback(ref, server, item, s.id).sources! })) : undefined;
  return { ...initial.stream, sources, defaultSource: initial.id, subtitles, audioTracks };
@@ -49,7 +55,7 @@ function read(token: string): Ticket {
  return data;
 }
 function startPath(ticket: Ticket): string {
- return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: "0", videoCodec: "h264", audioCodec: "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: ticket.subtitle !== undefined ? "burn" : "none", ...(ticket.audio !== undefined ? { audioStreamID: String(ticket.audio) } : {}), session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, "X-Plex-Client-Profile-Extra": "add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=h264&audioCodec=aac)" })}`;
+ return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: ticket.copyVideo ? "1" : "0", directStreamAudio: "0", audioChannelCount: "2", videoCodec: "h264", audioCodec: "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: ticket.subtitle !== undefined ? "burn" : "none", ...(ticket.audio !== undefined ? { audioStreamID: String(ticket.audio) } : {}), session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, "X-Plex-Client-Profile-Extra": "add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=h264&audioCodec=aac)" })}`;
 }
 async function stream(server: Server, resource: string, method: string, range?: string, type?: string, signal?: AbortSignal) {
  const res = await request(server, resource, { method, headers: range ? { range } : {}, signal });
