@@ -27,8 +27,8 @@ function OfflineSidebar() {
 
 function Shell() {
   const [searchOpen, setSearchOpen] = useSearchShortcut();
-  const { pathname } = useLocation();
-  useEffect(() => { window.scrollTo({ top: 0 }); }, [pathname]);
+  const { pathname, search } = useLocation();
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [pathname, search]);
   const { resolved, setTheme } = useTheme();
   const [connecting, setConnecting] = useState(false);
   const [message, setMessage] = useState("");
@@ -45,7 +45,7 @@ function Shell() {
       <Button size="icon" variant="ghost" aria-label="Toggle theme" onClick={() => setTheme(resolved === "dark" ? "light" : "dark")}>{resolved === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}</Button>
       <Button size="sm" variant="secondary" aria-label="Reconnect" title="Reconnect to server" disabled={connecting} onClick={() => void reconnect()}>{connecting ? <Spinner /> : <RefreshCw className="size-4" />}<span className="hidden xl:inline">Reconnect</span></Button>
     </>} />
-    <div className="flex"><OfflineSidebar /><main key={pathname} className="page-transition min-w-0 flex-1">{message && <p role="status" className="text-muted-foreground px-8 pt-4 text-sm">{message}</p>}<Outlet /></main></div>
+    <div className="flex"><OfflineSidebar /><main key={pathname === "/downloads" ? pathname + search : pathname} className="page-transition min-w-0 flex-1">{message && <p role="status" className="text-muted-foreground px-8 pt-4 text-sm">{message}</p>}<Outlet /></main></div>
     <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
   </div>;
 }

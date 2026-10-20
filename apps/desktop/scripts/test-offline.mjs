@@ -65,7 +65,7 @@ try{
   await send('Page.navigate',{url:server+'/downloads'});await wait(`!!document.querySelector('[aria-label^="Play "]')`);
   const screenshot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(`${root}/online.png`,Buffer.from(screenshot.data,'base64'));
   check(true,'online Downloads library shows completed video');
-  check(await evaluate(`document.querySelector('[aria-label="Offline storage usage"]')?.getAttribute('aria-valuenow') !== null && document.querySelector('[aria-label="Device disk usage"]')?.getAttribute('aria-valuenow') !== null`),'storage meters expose download limit and disk usage');
+  check(await evaluate(`!!document.querySelector('[aria-label="Device storage usage"]')?.getAttribute('aria-valuetext')`),'segmented storage meter exposes disk usage, Fanoos downloads and free space');
   check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]')`),'Downloads is always in the online sidebar');
   await evaluate(`document.querySelector('[data-slot="select-trigger"]').click()`);
   await wait(`!!document.querySelector('[role="option"]')`);
@@ -74,9 +74,10 @@ try{
   await evaluate(`Array.from(document.querySelectorAll('[role="option"]')).find(o=>o.textContent==='50 GB').click()`);
   await wait(`window.fanoosDesktop.downloads.list().then(l=>l.limitBytes===50*1024**3)`);
   check(true,'shared storage Select updates the persisted limit');
-  await evaluate(`document.querySelector('[aria-label="Downloaded channels and shows"] a').click()`);
+  await evaluate(`window.downloadsMainBeforeNavigation=document.querySelector('main');document.querySelector('main section h2 a').click()`);
   await wait(`location.search.includes('group=') && document.querySelector('h1')?.textContent==='jawed'`);
   check(await evaluate(`!!document.querySelector('[aria-label="Downloaded channels and shows"] a[aria-current="page"]')`),'sidebar opens the selected channel with an active state and heading');
+  check(await evaluate(`window.downloadsMainBeforeNavigation!==document.querySelector('main') && getComputedStyle(document.querySelector('main')).animationName!=='none'`),'channel heading navigation restarts the page animation');
   check(await evaluate(`!!document.querySelector('main [data-slot=avatar]') && document.querySelector('main').textContent.includes('1 saved video') && document.querySelector('article').classList.contains('flex-col')`),'selected channel has an avatar, saved-video summary and video grid');
   await evaluate(`document.querySelector('[aria-label^="Remove "]').click()`);
   await wait(`!!document.querySelector('[role="dialog"]') && document.querySelector('[role="dialog"]').textContent.includes('Remove download?')`);

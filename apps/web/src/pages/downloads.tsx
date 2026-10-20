@@ -41,7 +41,7 @@ function DownloadRow({ item, refresh, card = false }: { item: OfflineDownload; r
     </div>
     <div className="min-w-0 flex-1">
       <h2 className="line-clamp-2 text-sm font-semibold">{item.video.title}</h2>
-      {!card && <p className="text-muted-foreground mt-1 text-xs">{item.video.channelName}</p>}
+      {!card && <p className="text-muted-foreground mt-1 text-xs"><Link className="hover:text-foreground transition-colors" to={`/downloads?group=${encodeURIComponent(downloadGroups([item])[0]!.key)}`}>{item.video.episode?.seriesTitle || item.video.channelName}</Link></p>}
       <p className="text-muted-foreground mt-2 text-xs">{item.quality} · {item.audio} · {fileSize(item.status === "complete" ? item.received : item.total)}</p>
       {item.downloadedAt && <p className="text-muted-foreground mt-1 text-xs">Downloaded {new Date(item.downloadedAt).toLocaleDateString()}</p>}
       {item.status !== "complete" && <div className="mt-3 flex items-center gap-2 text-xs" role="status">
@@ -98,16 +98,29 @@ export function DownloadsPage() {
     <PageHeader
       className={selected ? "" : "mb-6"}
       title={selected?.name ?? "Downloads"}
-      eyebrow={selected ? selected.items[0]?.video.episode ? "Downloaded show" : "Downloaded channel" : undefined}
       description={selected ? `${selected.items.length} saved ${selected.items.length === 1 ? "video" : "videos"} · ${formatDuration(selected.items.reduce((sum, item) => sum + item.video.duration, 0))} · ${fileSize(selected.items.reduce((sum, item) => sum + item.received, 0))}` : "Your videos, ready to watch offline."}
       actions={!selected && !window.fanoosDesktop?.offline && <Button variant="outline" className="rounded-full" onClick={() => void bridge.open()}><HardDrive className="size-4" />Open offline library</Button>}
     />
     </div>
     {error && <p role="alert" className="text-destructive mb-4 text-sm">{error}</p>}
-    {library && !selected && <div className="bg-secondary/40 mb-6 grid gap-5 rounded-xl border p-4 text-xs sm:grid-cols-2">
-      <div className="space-y-2"><div className="flex items-center justify-between gap-3"><span className="font-medium">Offline storage</span><span className="text-muted-foreground">{fileSize(library.usedBytes)} of {fileSize(library.limitBytes)}</span></div><Progress aria-label="Offline storage usage" value={library.usedBytes / library.limitBytes * 100} /><span className="text-muted-foreground block">{Math.round(library.usedBytes / library.limitBytes * 100)}% of download limit used</span></div>
-      <div className="space-y-2"><div className="flex items-center justify-between gap-3"><span className="font-medium">Device disk</span><span className="text-muted-foreground">{fileSize(Math.max(0, library.totalDiskBytes - library.freeBytes))} of {fileSize(library.totalDiskBytes)}</span></div><Progress aria-label="Device disk usage" value={library.totalDiskBytes ? (1 - library.freeBytes / library.totalDiskBytes) * 100 : 0} /><span className="text-muted-foreground block">{fileSize(library.freeBytes)} available</span></div>
-      <div className="flex items-center gap-2 sm:col-span-2">
+    {library && !selected && <div className="bg-secondary/40 mb-6 space-y-4 rounded-xl border p-4 text-xs">
+      <div className="flex items-center justify-between gap-3"><span className="font-medium">Device storage</span><span className="text-muted-foreground">{fileSize(library.totalDiskBytes)} total</span></div>
+      <Progress
+        className="h-3"
+        aria-label="Device storage usage"
+        aria-valuetext={`${fileSize(Math.max(0, library.totalDiskBytes - library.freeBytes - library.usedBytes))} other files, ${fileSize(library.usedBytes)} Fanoos downloads, ${fileSize(library.freeBytes)} free`}
+        value={library.totalDiskBytes ? (1 - library.freeBytes / library.totalDiskBytes) * 100 : 0}
+        segments={[
+          { value: library.totalDiskBytes ? Math.max(0, library.totalDiskBytes - library.freeBytes - library.usedBytes) / library.totalDiskBytes * 100 : 0, className: "bg-muted-foreground/50" },
+          { value: library.totalDiskBytes ? library.usedBytes / library.totalDiskBytes * 100 : 0, className: "bg-brand min-w-[3px]" },
+        ]}
+      />
+      <div className="text-muted-foreground flex flex-wrap gap-x-6 gap-y-2">
+        <span className="inline-flex items-center gap-2"><span className="bg-muted-foreground/50 size-2 rounded-full" />Other files · {fileSize(Math.max(0, library.totalDiskBytes - library.freeBytes - library.usedBytes))}</span>
+        <span className="inline-flex items-center gap-2"><span className="bg-brand size-2 rounded-full" />Fanoos · {fileSize(library.usedBytes)} of {fileSize(library.limitBytes)} limit</span>
+        <span className="inline-flex items-center gap-2"><span className="bg-secondary size-2 rounded-full border" />Free · {fileSize(library.freeBytes)}</span>
+      </div>
+      <div className="flex items-center gap-2">
         <Label htmlFor={storageId} className="text-muted-foreground text-xs font-normal">Device storage limit</Label>
         <Select value={String(Math.round(library.limitBytes / 1024 ** 3))} disabled={saving} onValueChange={(value) => void setLimit(value)}>
           <SelectTrigger id={storageId} size="sm" className="w-24"><SelectValue /></SelectTrigger>
@@ -125,7 +138,7 @@ export function DownloadsPage() {
 
     </div>}
     {pending.length > 0 && <section className="mb-8 space-y-3"><h2 className="font-display mb-4 text-xl font-semibold">Download queue <span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{pending.length}</span></h2>{pending.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} />)}</section>}
-    <div className="space-y-8">{groups.map((g) => <section key={g.key} aria-label={g.name}><h2 className="font-display mb-4 text-xl font-semibold">{selected ? "Videos" : g.name}<span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{g.items.length} saved</span></h2><div className={selected ? "grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "space-y-3"}>{g.items.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} card={!!selected} />)}</div></section>)}</div>
+    <div className="space-y-8">{groups.map((g) => <section key={g.key} aria-label={g.name}><h2 className="font-display mb-4 text-xl font-semibold">{selected ? "Videos" : <Link className="hover:text-brand transition-colors" to={`/downloads?group=${encodeURIComponent(g.key)}`}>{g.name}</Link>}<span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{g.items.length} saved</span></h2><div className={selected ? "grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "space-y-3"}>{g.items.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} card={!!selected} />)}</div></section>)}</div>
     {!!library?.items.length && !groups.length && !pending.length && <p role="status" className="text-muted-foreground py-8 text-center text-sm">No downloads match your search.</p>}
 
   </div>;

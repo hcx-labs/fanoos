@@ -9,14 +9,15 @@ import { ArtworkGlowContext, resetArtworkGlow } from "@/lib/artwork-glow";
 
 export function Layout() {
   const [searchOpen, setSearchOpen] = useSearchShortcut();
-  const { pathname, state } = useLocation();
+  const { pathname, search, state } = useLocation();
   const glow = !pathname.startsWith("/watch");
   const glowElement = useRef<HTMLDivElement>(null);
   // Each page mounts fresh, except navigations marked as the same page,
   // e.g. switching an episode's audio language, which only swaps the stream.
-  const page = useRef(pathname);
+  const destination = pathname === "/downloads" ? pathname + search : pathname;
+  const page = useRef(destination);
   const samePage = (state as { samePage?: boolean } | null)?.samePage === true;
-  if (!samePage) page.current = pathname;
+  if (!samePage) page.current = destination;
 
   useEffect(() => {
     if (!pathname.startsWith("/channel/")) resetArtworkGlow(glowElement.current);
@@ -24,7 +25,7 @@ export function Layout() {
 
   useEffect(() => {
     if (!samePage) window.scrollTo({ top: 0 });
-  }, [pathname, samePage]);
+  }, [destination, samePage]);
 
   return (
     <ArtworkGlowContext value={glowElement}>
