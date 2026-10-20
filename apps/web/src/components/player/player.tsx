@@ -274,6 +274,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     setActiveAudio("");
     if (stream.dash) {
       const player = MediaPlayer().create();
+      // Initialize the controller without a source so cleanup is safe while CDM setup waits.
+      player.initialize();
       let disposed = false;
       player.updateSettings({
         // No limitBitrateByPortal: in dash.js 5 it hides higher qualities entirely, which
@@ -347,13 +349,12 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           if (disposed) return;
         }
         player.initialize(el, stream.dash, resume?.playing ?? false, start || undefined);
+        dash.current = player;
+        if (import.meta.env.DEV) Object.assign(window, { __dash: player });
       };
       void initialize().catch((error: Error) => {
         if (!disposed) setFailure(window.fanoosDesktop ? `Protected playback could not start. ${error.message}` : drmMessage);
       });
-      dash.current = player;
-      // Development aid: inspect playback from the browser console.
-      if (import.meta.env.DEV) Object.assign(window, { __dash: player });
       return () => {
         disposed = true;
         el.removeEventListener("loadedmetadata", place);
