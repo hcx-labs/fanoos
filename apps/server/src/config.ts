@@ -35,7 +35,7 @@ export const config = {
   appName: env.APP_NAME ?? "Fanoos",
   /**
    * Backend services (provider protocol v1), as "slug=url" pairs: e.g.
-   * BACKENDS=youtube=http://127.0.0.1:8788,crunchyroll=http://127.0.0.1:8789
+   * BACKENDS=youtube=http://127.0.0.1:8788,crunchyroll=http://127.0.0.1:8789,plex=http://127.0.0.1:8790
    * The slug appears in app URLs (/watch/youtube/<id>); the order is the display order.
    */
   backends: (env.BACKENDS ?? "youtube=http://127.0.0.1:8788")

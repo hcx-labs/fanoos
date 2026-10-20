@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router";
 import {
   Download,
+  Film,
   CalendarDays,
   ChartColumn,
   Check,
@@ -53,11 +54,17 @@ import { cn } from "@/lib/utils";
 export const nav = [
   { to: "/", label: "Home", icon: House, end: true },
   { to: "/following", label: "Following", icon: UsersRound },
+  { to: "/movies", label: "Movies", icon: Film },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/library", label: "Library", icon: LibraryBig },
   ...(window.fanoosDesktop?.downloads ? [{ to: "/downloads", label: "Downloads", icon: Download }] : []),
   { to: "/analytics", label: "Analytics", icon: ChartColumn },
 ];
+
+export function useNavigation() {
+  const { feedBackends } = useAccounts();
+  return nav.filter((item) => item.to !== "/movies" || window.fanoosDesktop?.offline || feedBackends.some((backend) => backend.info?.features.includes("movies")));
+}
 
 export function useSearchShortcut() {
   const [open, setOpen] = useState(false);
@@ -82,6 +89,7 @@ export function useSearchShortcut() {
 
 export function TopBar({ onSearch, actions }: { onSearch: () => void; actions?: ReactNode }) {
   const scrolled = useScrolled();
+  const navigation = useNavigation();
   return (
     <header data-scrolled={scrolled || undefined} className="top-bar sticky top-0 z-40">
       {/* Three columns from md up: equal-width sides keep the search box at the true centre of the window. */}
@@ -92,7 +100,7 @@ export function TopBar({ onSearch, actions }: { onSearch: () => void; actions?: 
         </Link>
 
         <nav aria-label="Primary" className="ml-4 hidden items-center gap-1 md:flex lg:hidden">
-          {nav.map((item) => (
+          {navigation.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

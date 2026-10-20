@@ -5,6 +5,7 @@ import { PlayerBoundary } from "@/components/player/player-boundary";
 import { ChannelPage } from "@/pages/channel";
 import { DownloadsPage } from "@/pages/downloads";
 import { HomePage } from "@/pages/home";
+import { MoviesPage } from "@/pages/movies";
 import { LibraryPage } from "@/pages/library";
 import { SearchPage } from "@/pages/search";
 import { SettingsPage } from "@/pages/settings";
@@ -69,6 +70,7 @@ export function App() {
         <Route path="/downloads/:id" element={<Suspense fallback={<div className="page" role="status">Loading download…</div>}><DownloadedWatchPage /></Suspense>} />
         <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/movies" element={<MoviesPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

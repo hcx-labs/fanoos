@@ -27,8 +27,8 @@ const source = {
     recentChannels = channels;
     return channels;
   },
-  async feed({ group, accountId, backend }: { group?: string; accountId?: string; backend?: string } = {}) {
-    const videos = await api<Video[]>(`/feed${qs({ group, account: accountId, backend })}`);
+  async feed({ group, accountId, backend, library }: { group?: string; accountId?: string; backend?: string; library?: string } = {}) {
+    const videos = await api<Video[]>(`/feed${qs({ group, account: accountId, backend, library })}`);
     if (!group && !accountId && !backend) recentVideos = videos;
     return videos;
   },

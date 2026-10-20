@@ -59,13 +59,14 @@ contentRoutes.get("/feed", async (c) => {
   const group = c.req.query("group") || undefined;
   const only = c.req.query("account") || undefined;
   const backend = c.req.query("backend") || undefined;
+  const library = c.req.query("library") || undefined;
   const groups = groupsOf(user.id);
   const accounts = accountsFor(user.id, { feed: true }).filter((a) => (!only || a.id === only) && (!backend || a.slug === backend));
   const { items, failed } = await each(accounts, async (slug, list) =>
-    has(slug, "feed") ? viaToIds(await call<Video[]>(slug, "/feed", { accounts: refsOf(list) }), list, slug) : [],
+    has(slug, "feed") ? viaToIds(await call<Video[]>(slug, "/feed", { accounts: refsOf(list), query: { library } }), list, slug) : [],
   );
   if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
-  const videos = items.filter((v) => !group || groups.get(`${v.backend}:${v.channelId}`) === group);
+  const videos = items.filter((v) => (!group || groups.get(`${v.backend}:${v.channelId}`) === group) && (!library || v.libraryId === library));
   return c.json(videos.sort((a, b) => b.published.localeCompare(a.published)));
 });
 
@@ -144,7 +145,7 @@ contentRoutes.get("/resolve", async (c) => {
   const host = url.hostname.toLowerCase();
   const backend = services.find((s) => infoOf(s.slug)?.linkHosts.includes(host));
   if (!backend) throw fail(404, "No backend opens links from that site.", "not_found");
-  const found = await call<ResolvedLink>(backend.slug, "/resolve", { query: { url: url.toString() } }).catch(relay);
+  const found = await call<ResolvedLink>(backend.slug, "/resolve", { query: { url: url.toString() }, accounts: refsOf(accountsFor(c.get("user").id, { slug: backend.slug })) }).catch(relay);
   return c.json({ ...found, backend: backend.slug });
 });
 
@@ -208,7 +209,7 @@ item.get("/channels/:id", async (c) => {
   const page = await call<ChannelPage>(slug, `/channels/${id}`, { accounts: refsOf(list), query: { section: c.req.query("section"), next: c.req.query("next"), q: c.req.query("q"), sort: c.req.query("sort") } }).catch(relay);
   const group = groupsOf(c.get("user").id).get(`${slug}:${id}`);
   const [channel] = viaToIds([{ ...page.channel, group }], list, slug);
-  return c.json({ ...page, channel: channel!, videos: viaToIds(page.videos, list, slug) } satisfies ChannelPage);
+  return c.json({ ...page, channel: channel!, channels: page.channels ? viaToIds(page.channels, list, slug) : undefined, videos: viaToIds(page.videos, list, slug) } satisfies ChannelPage);
 });
 
 /** Full description, rather than the abbreviated channel browse metadata. */

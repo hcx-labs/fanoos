@@ -340,7 +340,7 @@ export function VideoInfo({ video, channel, onSeek, offline = false }: { video: 
       <div className="bg-secondary/70 mt-5 rounded-2xl p-4 text-sm">
         <div className="flex min-w-0 items-center gap-3 font-medium whitespace-nowrap">
           <span className="shrink-0">
-            {[video.episode ? null : formatViews(video), formatAgo(video.published), video.rating, video.premium ? "Premium" : null].filter(Boolean).join(" · ")}
+            {[video.kind === "movie" ? video.year : video.episode ? null : formatViews(video), formatAgo(video.published), video.rating, video.premium ? "Premium" : null].filter(Boolean).join(" · ")}
           </span>
           {segments.length > 0 && <SegmentSummary segments={segments} />}
         </div>

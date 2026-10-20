@@ -125,12 +125,12 @@ export function SubscribeControl({ channel }: { channel: Channel }) {
               <Zap /> Allow actions for {a.label}
             </DropdownMenuItem>
           ))}
-        {backend.info?.urls.channel && (
+        {(channel.url || backend.info?.urls.channel) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <a href={backend.info.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
-                <ExternalLink /> Open on {backend.info.name}
+              <a href={channel.url || backend.info?.urls.channel.replace("{id}", encodeURIComponent(channel.id))} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on {backend.info?.name ?? backend.slug}
               </a>
             </DropdownMenuItem>
           </>

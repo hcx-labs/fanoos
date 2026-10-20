@@ -3,6 +3,10 @@ import { Link, useParams } from "react-router";
 import { BellOff, Check, Rss, Search, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
+import { MovieCard } from "@/components/movie-card";
+import { ChannelCard } from "@/components/channel-card";
+import { PageHeader } from "@/components/page-header";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ChannelAvatar } from "@/components/channel-avatar";
 import { ChannelAbout } from "@/components/channel-about";
 import { VideoCard } from "@/components/video-card";
@@ -45,8 +49,10 @@ export function ChannelPage() {
   useTitle(page?.channel.name ?? (state.status === "loading" ? null : "Not found"));
   useArtworkGlow(page?.channel, state.status === "loading");
 
+  if (page?.channel.kind === "library") return <LibraryPage page={page} loading={state.status === "loading"} error={state.error} reload={reload} loadMore={() => void loadMore()} loadingMore={loadingMore} moreError={moreError} query={filter} onQuery={setFilter} onSearch={() => setQuery(filter.trim())} />;
+
   if (page?.channel.kind === "series")
-    return <ShowPage page={page} muted={muted} loading={state.status === "loading"} error={state.error} onRetry={reload} onSection={setSection} />;
+    return <ShowPage page={page} muted={muted} loading={state.status === "loading"} error={state.error} onRetry={reload} onSection={setSection} onLoadMore={() => void loadMore()} loadingMore={loadingMore} moreError={moreError} />;
 
   if (state.status === "loading" && !page)
     return (
@@ -206,7 +212,7 @@ export function ChannelPage() {
  * A show: its key art as a backdrop, the poster, what it's about, then a season picker and the
  * episodes of that season with how far each one was watched.
  */
-function ShowPage({ page, muted, loading, error, onRetry, onSection }: { page: Page; muted: boolean; loading: boolean; error?: Error; onRetry: () => void; onSection: (id: string) => void }) {
+function ShowPage({ page, muted, loading, error, onRetry, onSection, onLoadMore, loadingMore, moreError }: { page: Page; muted: boolean; loading: boolean; error?: Error; onRetry: () => void; onSection: (id: string) => void; onLoadMore: () => void; loadingMore: boolean; moreError?: Error }) {
   const { channel, videos, sections = [], section } = page;
   const progress = useStore((s) => s.progress);
   const watched = (v: Video) => progress[itemKey(v)] ?? v.progress ?? 0;
@@ -311,8 +317,27 @@ function ShowPage({ page, muted, loading, error, onRetry, onSection }: { page: P
             </li>
           ))}
         </ol>
+        {moreError && <p role="alert" className="text-destructive mt-4 text-sm">{moreError.message}</p>}
+        {page.next && <Button variant="outline" className="mt-6 rounded-full" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? "Loading…" : "Load more episodes"}</Button>}
         {!loading && !videos.length && <p className="text-muted-foreground mt-6 text-sm">No episodes in this season yet.</p>}
       </div>
     </div>
   );
+}
+
+function LibraryPage({ page, loading, error, reload, loadMore, loadingMore, moreError, query, onQuery, onSearch }: { page: Page; loading: boolean; error?: Error; reload: () => void; loadMore: () => void; loadingMore: boolean; moreError?: Error; query: string; onQuery: (value: string) => void; onSearch: () => void }) {
+  return <div className="page">
+    <PageHeader title={page.channel.name} eyebrow={page.channel.handle} description={page.channel.description} />
+    <form role="search" aria-label="Search this library" className="my-6 flex max-w-lg gap-2" onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
+      <InputGroup className="rounded-full"><InputGroupAddon><Search /></InputGroupAddon><InputGroupInput value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search this library" aria-label="Search this library" /></InputGroup>
+      <Button variant="secondary" className="rounded-full" type="submit">Search</Button>
+    </form>
+    {error && <div className="mb-4 flex items-center gap-3"><p role="alert" className="text-destructive text-sm">{error.message}</p><Button variant="outline" onClick={reload}>Try again</Button></div>}
+    <div aria-busy={loading} className={cn((page.channels || page.channel.libraryType === "movies") ? "grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6" : "grid gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4", loading && "opacity-60")}>
+      {page.channels ? page.channels.map((channel) => <ChannelCard key={itemKey(channel)} channel={channel} />) : page.videos.map((video) => video.kind === "movie" ? <MovieCard key={itemKey(video)} movie={video} /> : <VideoCard key={itemKey(video)} video={video} showChannel={false} />)}
+    </div>
+    {!loading && !(page.channels?.length || page.videos.length) && <Empty className="py-16"><EmptyHeader><EmptyTitle>No titles found</EmptyTitle></EmptyHeader></Empty>}
+    {moreError && <p role="alert" className="text-destructive mt-6 text-sm">{moreError.message}</p>}
+    {page.next && <div className="mt-8 flex justify-center"><Button variant="outline" className="rounded-full" disabled={loadingMore} onClick={loadMore}>{loadingMore ? "Loading…" : "Load more"}</Button></div>}
+  </div>;
 }

@@ -4,7 +4,7 @@ import { Link, NavLink, useLocation } from "react-router";
 import { ChevronDown, Settings } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
-import { nav } from "@/components/shell/top-bar";
+import { useNavigation } from "@/components/shell/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useData } from "@/hooks/use-data";
 import { brand } from "@/lib/brand";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 /** Persistent left rail on wide screens: navigation and what the viewer follows (channels and shows). */
 export function ChannelRail() {
+  const nav = useNavigation();
   const downloaded = useLocation().pathname.startsWith("/downloads");
   const muted = useStore((s) => s.muted);
   const source = useSource();

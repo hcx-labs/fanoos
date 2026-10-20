@@ -81,6 +81,9 @@ const setHeights = (heights) => evaluate(`(() => {
   let fiber=video[Object.keys(video).find(key=>key.startsWith('__reactFiber$'))];
   while(fiber&&fiber.type?.name!=='Player')fiber=fiber.return;
   let hook=fiber.memoizedState;
+  // The first array state is in-stream audio; the next one is manifest heights.
+  while(hook&&!(Array.isArray(hook.memoizedState)&&hook.queue?.dispatch))hook=hook.next;
+  hook=hook?.next;
   while(hook&&!(Array.isArray(hook.memoizedState)&&hook.queue?.dispatch))hook=hook.next;
   if(!hook)throw Error('Player heights hook not found');
   hook.queue.dispatch(${JSON.stringify(heights)});

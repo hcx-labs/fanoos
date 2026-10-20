@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [core, youtube, crunchyroll, companion-signed-in]
+        image: [core, youtube, crunchyroll, plex, companion-signed-in]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +125,7 @@ jobs:
             echo "## Images"
             echo
             echo '```'
-            for image in core youtube crunchyroll companion-signed-in; do echo "ghcr.io/$owner/fanoos-$image:$version"; done
+            for image in core youtube crunchyroll plex companion-signed-in; do echo "ghcr.io/$owner/fanoos-$image:$version"; done
             echo '```'
             echo
             echo 'Platforms: `linux/amd64`, `linux/arm64`. See `compose.yaml` to run the whole stack.'

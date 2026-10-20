@@ -43,7 +43,7 @@ import { backendName, useAccounts, useProfile } from "@/lib/session";
 import { useSource } from "@/lib/source";
 import { actions, getLocalState, playbackScopes, trackPrefs, useSettings, useTrackPrefs, type Settings } from "@/lib/store";
 import type { SubtitleStyle } from "@/lib/subtitle-style";
-import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
+import type { PlaybackSource, Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { effectiveQuality } from "@/lib/quality";
 import { SubtitleOverlay, SubtitleStyleMenu } from "./subtitles";
@@ -126,8 +126,11 @@ export const languageLabel = (locale: string) => {
   return where ? `${name} (${where})` : name;
 };
 
-export function Player({ video, stream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
+export function Player({ video, stream: inputStream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
+  const [selectedSource, setSelectedSource] = useState(inputStream.defaultSource ?? "");
+  const currentSource = inputStream.sources?.find((source) => source.id === selectedSource) ?? inputStream.sources?.find((source) => source.id === inputStream.defaultSource);
+  const stream = currentSource ? { ...inputStream, dash: undefined, progressive: undefined, session: undefined, ...currentSource.stream } : inputStream;
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLVideoElement>(null);
@@ -265,7 +268,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     if (!el) return;
     // Only a different stream continues from the old one; the same stream set up again
     // (React runs effects twice in development) starts where it should.
-    const resume = handoff.current && handoff.current.from !== stream.dash ? handoff.current : null;
+    const resume = handoff.current && handoff.current.from !== (stream.dash ?? stream.progressive) ? handoff.current : null;
     handoff.current = null;
     setFailure(null);
     setHeights([]);
@@ -366,10 +369,11 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     }
     if (stream.progressive) {
       el.src = stream.progressive;
-      const place = () => { el.currentTime = resumeAt; };
-      if (resumeAt) el.addEventListener("loadedmetadata", place, { once: true });
+      const place = () => { el.currentTime = resume?.time ?? resumeAt; if (resume?.playing) void el.play().catch(() => {}); };
+      el.addEventListener("loadedmetadata", place, { once: true });
       return () => {
         el.removeEventListener("loadedmetadata", place);
+        handoff.current = { from: stream.progressive!, time: el.currentTime, playing: !el.paused };
         el.pause();
         el.removeAttribute("src");
         el.load();
@@ -840,10 +844,10 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     Try again
                   </button>
                 )}
-                {backend?.info?.urls.video && (
+                {(video.url || backend?.info?.urls.video) && (
                   <a
                     className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25"
-                    href={backend.info.urls.video.replace("{id}", encodeURIComponent(video.id))}
+                    href={video.url || backend?.info?.urls.video.replace("{id}", encodeURIComponent(video.id))}
                     target="_blank"
                     rel="noreferrer noopener"
                   >
@@ -1034,6 +1038,9 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     versions={versions}
                     audio={video.episode?.audio}
                     onAudio={switchAudio}
+                    sources={inputStream.sources}
+                    selectedSource={currentSource?.id}
+                    onSource={setSelectedSource}
                     heights={heights}
                     playingHeight={playingHeight}
                     view={menu}
@@ -1119,6 +1126,9 @@ function SettingsPanel({
   onStreamAudio,
   audio,
   onAudio,
+  sources,
+  selectedSource,
+  onSource,
   heights,
   playingHeight,
   view,
@@ -1139,6 +1149,9 @@ function SettingsPanel({
   versions: { audio: string; id: string; original?: boolean }[];
   audio?: string;
   onAudio: (id: string, audio: string) => void;
+  sources?: PlaybackSource[];
+  selectedSource?: string;
+  onSource: (id: string) => void;
   heights: number[];
   playingHeight: number | null;
   view: MenuView;
@@ -1183,7 +1196,7 @@ function SettingsPanel({
           <button type="button" className={row} onClick={() => onView("quality")}>
             <Sparkles className="size-4 text-white/70" /> Quality
             <span className="ml-auto text-white/60">
-              {qualityForVideo === "auto" ? `Auto${playingHeight ? ` (${playingHeight}p)` : ""}` : qualityForVideo}
+              {sources?.length ? (() => { const source = sources.find((s) => s.id === selectedSource); return source?.kind === "original" ? source.label : `${source?.label ?? ""} · Transcode`; })() : qualityForVideo === "auto" ? `Auto${playingHeight ? ` (${playingHeight}p)` : ""}` : qualityForVideo}
             </span>
             <ChevronRight className="size-4 text-white/40" />
           </button>
@@ -1306,7 +1319,12 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Quality
           </button>
           <div className="my-1 h-px bg-white/10" />
-          {["auto", ...heights.map((h) => `${h}p`)].map((quality) => (
+          {sources?.length ? sources.map((source) => (
+            <button key={source.id} type="button" role="menuitemradio" aria-checked={source.id === selectedSource} className={row} onClick={() => { onSource(source.id); onView("main"); }}>
+              <Check className={cn("size-4 shrink-0", source.id === selectedSource ? "text-brand" : "opacity-0")} />
+              <span className="min-w-0"><span className="block">{source.kind === "original" ? source.label : `${source.label} · Transcode`}</span><span className="block text-xs text-white/50">{source.description}{source.kind === "original" && source.bitrate ? ` · ${(source.bitrate / 1000000).toFixed(1)} Mbps` : ""}</span></span>
+            </button>
+          )) : ["auto", ...heights.map((h) => `${h}p`)].map((quality) => (
             <button
               key={quality}
               type="button"
@@ -1327,7 +1345,7 @@ function SettingsPanel({
               )}
             </button>
           ))}
-          {!heights.length && <p className="px-3 py-2 text-xs text-white/60">Qualities appear once the video loads.</p>}
+          {!sources?.length && !heights.length && <p className="px-3 py-2 text-xs text-white/60">Qualities appear once the video loads.</p>}
         </>
       )}
     </div>
