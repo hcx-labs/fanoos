@@ -48,6 +48,7 @@ services:
   core: *uses-ctrld
   youtube: *uses-ctrld
   crunchyroll: *uses-ctrld
+  plex: *uses-ctrld
   companion: *uses-ctrld
   companion-signed-in: *uses-ctrld
 

@@ -1,8 +1,10 @@
+import { SectionBar } from "@/components/section-bar";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link } from "react-router";
 import { LayoutGrid, Link2, List, Settings2, Sparkles, X } from "lucide-react";
 import { AccountAvatar } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
+import { FeedFilterPills } from "@/components/feed-filter-pills";
 import { Hero, pickHeroVideos } from "@/components/hero";
 import { PageHeader, ServicePills } from "@/components/page-header";
 import { Thumbnail, VideoCard, VideoRow, useVideoTitle } from "@/components/video-card";
@@ -66,6 +68,10 @@ export function HomePage() {
   const [accountId, setAccountId] = useState("all");
   // Which service the home page shows: "all", or one backend's slug.
   const [service, setService] = useState("all");
+  const [library, setLibrary] = useState("all");
+  const selectedBackend = feedBackends.find((backend) => backend.slug === service) ?? (feedBackends.length === 1 ? feedBackends[0] : undefined);
+  const plexSelected = selectedBackend?.info?.kind === "plex";
+  const activeLibrary = plexSelected && library !== "all" ? library : undefined;
   const source = useSource();
   const subs = useData(() => source.following(), [source.key]);
   const feed = useData(
@@ -74,8 +80,9 @@ export function HomePage() {
         group: group === "all" ? undefined : group,
         accountId: accountId === "all" ? undefined : accountId,
         backend: service === "all" ? undefined : service,
+        library: activeLibrary,
       }),
-    [source.key, group, accountId, service],
+    [source.key, group, accountId, service, activeLibrary],
   );
   // Groups come from the channels themselves, across every account.
   const groups = useMemo(() => [...new Set((subs.data ?? []).map((c) => c.group).filter((g): g is string => Boolean(g)))].sort(), [subs.data]);
@@ -91,6 +98,8 @@ export function HomePage() {
   // account per service, the service pills already say it all.
   const sameService = service !== "all" ? feedAccounts : feedBackends.length === 1 ? inFeed : [];
   const accountChoices = sameService.length > 1 ? sameService : [];
+
+  const libraries = (subs.data ?? []).filter((channel) => channel.kind === "library" && channel.backend === selectedBackend?.slug && (accountId === "all" || channel.via?.includes(accountId)));
 
   // Categories present in the feed, most common first (YouTube's own video categories).
   const [category, setCategory] = useState("all");
@@ -120,9 +129,9 @@ export function HomePage() {
     const local = lastResume.current.filter((v) => progress[itemKey(v)]);
     const seen = new Set(local.map(itemKey));
     const fromServices = (remote.data ?? []).filter((v) => !seen.has(itemKey(v)));
-    return [...local, ...fromServices].filter((v) => service === "all" || v.backend === service);
+    return [...local, ...fromServices].filter((v) => (service === "all" || v.backend === service) && (!activeLibrary || v.libraryId === activeLibrary));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resume.data, remote.data, progress, service]);
+  }, [resume.data, remote.data, progress, service, activeLibrary]);
   // Episodes ("up next" from followed shows) also get their own row; the feed mixes them with uploads.
   const episodes = useMemo(() => videos.filter((v) => v.episode), [videos]);
   const uploads = useMemo(() => videos.filter((v) => !v.episode), [videos]);
@@ -184,6 +193,8 @@ export function HomePage() {
             <>
               {inFeed.length === 0 ? (
                 "Nothing linked yet."
+              ) : plexSelected && feed.status === "ready" ? (
+                <>{feed.data.length} recent {feed.data.length === 1 ? "addition" : "additions"} from {activeLibrary ? libraries.find((c) => c.id === activeLibrary)?.name ?? "this library" : `${libraries.length} libraries`}.</>
               ) : subs.status === "ready" ? (
                 <>
                   {unseenChannels > 0 || !newShows ? (
@@ -239,6 +250,8 @@ export function HomePage() {
                   setService(slug);
                   setAccountId("all");
                   setCategory("all");
+                  setLibrary("all");
+                  setFocus(null);
                 }}
                 options={[{ value: "all", label: "Everything" }, ...feedBackends.map((b) => ({ value: b.slug, label: backendName(b), color: b.info?.color }))]}
               />
@@ -252,7 +265,7 @@ export function HomePage() {
                   key={a.id}
                   type="button"
                   aria-pressed={selected}
-                  onClick={() => setAccountId(a.id)}
+                  onClick={() => { setAccountId(a.id); setLibrary("all"); }}
                   className={cn(
                     "text-muted-foreground hover:text-foreground flex h-9 items-center gap-2 rounded-full border px-1.5 pr-3.5 text-[13px] font-medium transition-colors",
                     a.id === "all" && "pl-3.5",
@@ -271,34 +284,17 @@ export function HomePage() {
 
         {/* One line: category chips scroll sideways; view controls stay pinned on the right. */}
         <div className="mt-6 flex items-center gap-4">
-          {categoryCounts.length > 1 ? (
-            <div
-              className="no-scrollbar flex min-w-0 flex-1 gap-2 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] pr-10"
-              role="group"
-              aria-label="Filter by category"
-            >
-            {[["all", feed.data?.length ?? 0] as [string, number], ...categoryCounts].map(([name, count]) => {
-              const selected = category === name;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setCategory(selected && name !== "all" ? "all" : name)}
-                  className={cn(
-                    "bg-secondary text-secondary-foreground hover:bg-accent flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-colors",
-                    selected && "bg-foreground text-background hover:bg-foreground",
-                  )}
-                >
-                  {name === "all" ? "All videos" : name}
-                  <span className={cn("text-[11px] tabular-nums", selected ? "text-background/70" : "text-muted-foreground")}>{count}</span>
-                </button>
-              );
-            })}
-            </div>
-          ) : (
-            <div className="flex-1" />
-          )}
+          {plexSelected && libraries.length > 0 ? (
+            <FeedFilterPills label="Plex library" value={activeLibrary ?? "all"} onChange={(value) => { setLibrary(value); setFocus(null); setCategory("all"); setGroup("all"); setRange(undefined); }} options={[
+              { value: "all", label: "All libraries" },
+              ...libraries.map((channel) => ({ value: channel.id, label: libraries.some((other) => other.id !== channel.id && other.name === channel.name) && channel.handle ? `${channel.name} · ${channel.handle}` : channel.name })),
+            ]} />
+          ) : categoryCounts.length > 1 ? (
+            <FeedFilterPills label="Filter by category" value={category} onChange={(value) => setCategory(category === value && value !== "all" ? "all" : value)} options={[
+              { value: "all", label: "All videos", count: feed.data?.length ?? 0 },
+              ...categoryCounts.map(([name, count]) => ({ value: name, label: name, count })),
+            ]} />
+          ) : <div className="flex-1" />}
           <div className="flex shrink-0 items-center gap-4">
             <div className="flex items-center gap-2">
               <Switch id="hide-watched" checked={settings.hideWatched} onCheckedChange={(on) => actions.setting("hideWatched", on)} />
@@ -476,12 +472,7 @@ function FeedBar({
   const items = range ? shown : shown.filter((v) => bucket(v.published) === label);
 
   return (
-    <div ref={ref} className="pointer-events-none sticky top-16 z-20 mt-12 flex flex-wrap items-center gap-x-3 gap-y-2 py-3 select-none">
-      {/* Solid pills: readable over any thumbnail or text, light or dark. */}
-      <div className="bg-background flex h-9 items-baseline gap-2 rounded-full border px-4 pt-1.5 shadow-lg shadow-black/15">
-        <h2 className="font-display text-base font-semibold">{label}</h2>
-        <span className="text-muted-foreground text-xs font-medium">{countLabel(items)}</span>
-      </div>
+    <SectionBar ref={ref} title={label} detail={countLabel(items)}>
       <div className="pointer-events-auto ml-auto flex flex-wrap gap-1.5" role="group" aria-label="Show videos from">
         {rangeCounts
           .filter(([, count]) => count > 0)
@@ -501,7 +492,7 @@ function FeedBar({
             </button>
           ))}
       </div>
-    </div>
+    </SectionBar>
   );
 }
 

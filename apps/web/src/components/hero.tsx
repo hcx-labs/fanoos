@@ -41,7 +41,7 @@ function teaser(description: string, max = 180) {
 
 const prefersReducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Rotating spotlight of the newest uploads from your channels. */
+/** Rotating spotlight of the latest titles across connected services. */
 export function Hero({ videos }: { videos: Video[] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -79,7 +79,7 @@ export function Hero({ videos }: { videos: Video[] }) {
     <section
       ref={section}
       aria-roledescription="carousel"
-      aria-label="Latest from your channels"
+      aria-label="Latest across your services"
       className="group/hero bg-card relative mt-8 overflow-hidden rounded-3xl border"
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
@@ -113,9 +113,9 @@ export function Hero({ videos }: { videos: Video[] }) {
 
           <div key={itemKey(video)} className="animate-in fade-in slide-in-from-bottom-3 absolute inset-x-0 bottom-0 p-5 text-white duration-700 sm:p-8 lg:p-10">
             <div className="flex items-center gap-2.5 text-sm">
-              <ChannelAvatar name={video.channelName} src={video.channelAvatar} className="size-8 ring-2 ring-white/20" textClassName="text-[11px]" />
+              {video.kind !== "movie" && <ChannelAvatar name={video.channelName} src={video.channelAvatar} className="size-8 ring-2 ring-white/20" textClassName="text-[11px]" />}
               <Link to={paths.channelOf(video)} className="font-semibold hover:underline">
-                {video.channelName}
+                {video.kind === "movie" ? "Movie" : video.channelName}
               </Link>
               {formatAgo(video.published) && (
                 <>
@@ -176,7 +176,7 @@ export function Hero({ videos }: { videos: Video[] }) {
         {/* Queue on wide screens, with a progress bar for the current slide. */}
         {count > 1 && (
           <ol className="hidden flex-col gap-1 border-l p-3 lg:flex">
-            <li className="text-muted-foreground px-2 pt-1 pb-2 text-xs font-medium">Latest from your channels</li>
+            <li className="text-muted-foreground px-2 pt-1 pb-2 text-xs font-medium">Latest across your services</li>
             {videos.map((v, i) => (
               <li key={v.id}>
                 <QueueItem
@@ -198,7 +198,7 @@ function HeroTitle({ video }: { video: Video }) {
   const title = useVideoTitle(video);
   return (
     <h2 className="font-display mt-3 max-w-3xl text-2xl leading-tight font-semibold text-balance drop-shadow-sm sm:text-4xl">
-      <Link to={paths.watch(video)} className="hover:underline hover:decoration-white/40 hover:underline-offset-4">
+      <Link to={video.kind === "movie" ? paths.channelOf(video) : paths.watch(video)} className="hover:underline hover:decoration-white/40 hover:underline-offset-4">
         {title}
       </Link>
     </h2>

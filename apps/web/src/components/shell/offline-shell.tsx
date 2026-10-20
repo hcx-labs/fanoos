@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { CloudOff, Download, Moon, RefreshCw, Settings, Sun } from "lucide-react";
-import { TopBar, nav, useSearchShortcut } from "@/components/shell/top-bar";
+import { TopBar, nav, useNavigation, useSearchShortcut } from "@/components/shell/top-bar";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { SearchPalette } from "@/components/shell/search-palette";
@@ -13,6 +13,7 @@ import { downloadBridge, useDownloads } from "@/lib/downloads";
 import { cn } from "@/lib/utils";
 
 function OfflineSidebar() {
+  const nav = useNavigation();
   const { pathname } = useLocation();
   const { library } = useDownloads();
   return <aside className="channel-rail sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 flex-col px-3 pt-2 pb-4 lg:flex">

@@ -1,0 +1,25 @@
+{
+  "name": "@fanoos/plex",
+  "private": true,
+  "type": "module",
+  "version": "0.3.3",
+  "description": "Plex Media Server backend for Fanoos (provider protocol v1).",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/index.ts",
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@tube/shared": "*",
+    "hono": "^4.13.13",
+    "redis": "^6.3.0",
+    "@xmldom/xmldom": "^0.8.15"
+  },
+  "license": "AGPL-3.0-or-later"
+}

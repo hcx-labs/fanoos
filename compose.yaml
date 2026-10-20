@@ -21,14 +21,14 @@ services:
     environment:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8787}
       BACKEND_TOKEN: ${BACKEND_TOKEN:?set BACKEND_TOKEN in .env}
-      BACKENDS: youtube=http://youtube:8788,crunchyroll=http://crunchyroll:8789
+      BACKENDS: youtube=http://youtube:8788,crunchyroll=http://crunchyroll:8789,plex=http://plex:8790
       SECRET_KEY: ${CORE_SECRET_KEY:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_NAME: ${OIDC_NAME:-}
     volumes: [core-data:/data]
-    depends_on: [youtube, crunchyroll]
+    depends_on: [youtube, crunchyroll, plex]
 
   youtube:
     <<: *backend
@@ -62,6 +62,14 @@ services:
       CRUNCHYROLL_BASIC_AUTH: ${CRUNCHYROLL_BASIC_AUTH:-}
       CRUNCHYROLL_APP_VERSION: ${CRUNCHYROLL_APP_VERSION:-}
     volumes: [crunchyroll-data:/data]
+
+  plex:
+    <<: *backend
+    image: ghcr.io/hcx-labs/fanoos-plex:${FANOOS_VERSION:-latest}
+    environment:
+      <<: *backend-env
+      PLEX_OWNED_ONLY: ${PLEX_OWNED_ONLY:-0}
+    volumes: [plex-data:/data]
 
   # Generates YouTube's anti-bot tokens and streams media for the YouTube backend.
   companion:
@@ -98,3 +106,4 @@ volumes:
   core-data:
   youtube-data:
   crunchyroll-data:
+  plex-data:

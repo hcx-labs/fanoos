@@ -68,6 +68,8 @@ export type BackendFeature =
   /** The service tracks watch progress itself (core reports positions to it). */
   | "progress"
   | "playlists"
+  /** Dedicated movie libraries, browsable through following/channels. */
+  | "movies"
   /** Community dislike counts. */
   | "dislikes"
   /** Skippable segments (sponsors, intros, credits). */

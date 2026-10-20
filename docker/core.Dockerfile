@@ -9,6 +9,7 @@ COPY packages/shared/package.json packages/shared/
 COPY services/kit/package.json services/kit/
 COPY services/youtube/package.json services/youtube/
 COPY services/crunchyroll/package.json services/crunchyroll/
+COPY services/plex/package.json services/plex/
 RUN npm ci --workspace @tube/web --workspace @tube/server --include-workspace-root
 COPY packages/shared packages/shared
 COPY apps/web apps/web
@@ -24,6 +25,7 @@ COPY packages/shared/package.json packages/shared/
 COPY services/kit/package.json services/kit/
 COPY services/youtube/package.json services/youtube/
 COPY services/crunchyroll/package.json services/crunchyroll/
+COPY services/plex/package.json services/plex/
 RUN npm ci --omit=dev --workspace @tube/server
 
 FROM node:24-slim
