@@ -132,14 +132,16 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
   const [providerAudio, setProviderAudio] = useState("");
   const providerTracks = inputStream.audioTracks ?? [];
   const [serverSubtitle, setServerSubtitle] = useState("");
-  const providerTrack = providerTracks.find((track) => track.id === providerAudio) ?? (serverSubtitle ? providerTracks.find((track) => track.selected) ?? providerTracks[0] : undefined);
-  const playbackSources = (providerTrack?.sources ?? inputStream.sources)?.filter((source) => (!serverSubtitle || source.kind === "transcode") && (!source.mimeType || Boolean(document.createElement("video").canPlayType(source.mimeType))));
-  const currentSource = playbackSources?.find((source) => source.id === selectedSource) ?? playbackSources?.find((source) => source.id === inputStream.defaultSource) ?? playbackSources?.find((source) => source.id === "transcode-1080") ?? playbackSources?.[0];
+  const providerTrack = providerTracks.find((track) => track.id === providerAudio);
+  const playbackSources = (providerTrack?.sources ?? inputStream.sources)?.filter((source) => !serverSubtitle || source.kind === "transcode");
+  const currentSource = playbackSources?.find((source) => source.id === selectedSource) ?? playbackSources?.find((source) => source.id === inputStream.defaultSource) ?? playbackSources?.find((source) => source.id === "transcode-auto") ?? playbackSources?.find((source) => source.id === "transcode-1080") ?? playbackSources?.[0];
   let stream = currentSource ? { ...inputStream, dash: undefined, progressive: undefined, session: undefined, ...currentSource.stream } : inputStream;
   if (serverSubtitle && stream.dash) {
     const selected = (url?: string) => url ? `${url}${url.includes("?") ? "&" : "?"}subtitle=${encodeURIComponent(serverSubtitle)}` : undefined;
     stream = { ...stream, dash: selected(stream.dash), session: stream.session ? { ...stream.session, keepAlive: selected(stream.session.keepAlive), release: selected(stream.session.release) } : undefined };
   }
+  const originalAudio = inputStream.originalAudio;
+  const unsupportedAudio = !providerAudio && originalAudio && (!originalAudio.mimeType || !document.createElement("audio").canPlayType(originalAudio.mimeType));
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLVideoElement>(null);
@@ -815,6 +817,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
             if (!segmentMuted) setMuted(e.currentTarget.muted);
           }}
         />
+        {unsupportedAudio && <div role="status" className="absolute inset-x-3 top-3 z-20 flex items-center justify-between gap-3 rounded-lg bg-black/80 px-3 py-2 text-xs text-white"><span>This browser may not support {originalAudio.codec.toUpperCase()} audio. Choose Transcode in Audio to hear it.</span><button type="button" className="shrink-0 font-semibold underline" onClick={() => setMenu("audio")}>Audio settings</button></div>}
         {vttTrack && <SubtitleOverlay track={vttTrack} style={subtitleStyle} lifted={chrome} />}
 
         {/* No playable stream (live) or a playback failure. */}
@@ -1036,7 +1039,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
               {/* Subtitles live in Settings (and on c); no separate button. */}
               <div className="relative">
                 <Control label="Settings" onClick={() => setMenu((m) => (m ? null : "main"))} pressed={menu !== null}>
-                  <Settings2 className={cn("transition-transform duration-300", menu && "rotate-45")} />
+                  <Settings2 className={cn("[&_*]:transition-transform [&_*]:duration-200 motion-reduce:[&_*]:transition-none", menu && "[&_circle:first-of-type]:-translate-x-[10px] [&_circle:last-of-type]:translate-x-[10px] [&_path:first-of-type]:translate-x-[5px] [&_path:last-of-type]:-translate-x-[5px]")} />
                 </Control>
                 {menu && (
                   <SettingsPanel
@@ -1050,10 +1053,11 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
                     audio={video.episode?.audio}
                     onAudio={switchAudio}
                     sources={playbackSources}
-                    audioOutput={providerTracks.length && stream.dash ? "AAC stereo" : undefined}
+                    audioOutput={providerAudio && stream.dash ? "AAC stereo" : undefined}
                     providerTracks={providerTracks}
-                    providerAudio={providerAudio || providerTracks.find((track) => track.selected)?.id || providerTracks[0]?.id || ""}
-                    onProviderAudio={setProviderAudio}
+                    providerAudio={providerAudio}
+                    originalAudioLabel={originalAudio?.label}
+                    onProviderAudio={(id) => { setProviderAudio(id); setSelectedSource(id ? "transcode-auto" : "original"); }}
                     selectedSource={currentSource?.id}
                     onSource={setSelectedSource}
                     heights={heights}
@@ -1143,7 +1147,7 @@ function SettingsPanel({
   onAudio,
   sources,
   selectedSource,
-  providerTracks, providerAudio, onProviderAudio, audioOutput,
+  providerTracks, providerAudio, onProviderAudio, audioOutput, originalAudioLabel,
   onSource,
   heights,
   playingHeight,
@@ -1167,6 +1171,7 @@ function SettingsPanel({
   onAudio: (id: string, audio: string) => void;
   sources?: PlaybackSource[];
   selectedSource?: string;
+  originalAudioLabel?: string;
   audioOutput?: string;
   providerTracks: NonNullable<Stream["audioTracks"]>;
   providerAudio: string;
@@ -1197,7 +1202,7 @@ function SettingsPanel({
           {(versions.length > 1 || streamAudio.length > 1 || providerTracks.length > 0) && (
             <button type="button" className={row} onClick={() => onView("audio")}>
               <AudioLines className="size-4 text-white/70" /> Audio
-              <span className="ml-auto truncate text-white/60">{providerTracks.find((track) => track.id === providerAudio)?.label ?? streamAudio.find((o) => o.key === activeAudio)?.label ?? (audio ? languageLabel(audio) : "Original")}</span>
+              <span className="ml-auto truncate text-white/60">{(!providerAudio ? originalAudioLabel : undefined) ?? providerTracks.find((track) => track.id === providerAudio)?.label ?? streamAudio.find((o) => o.key === activeAudio)?.label ?? (audio ? languageLabel(audio) : "Original")}</span>
               <ChevronRight className="size-4 text-white/40" />
             </button>
           )}
@@ -1317,7 +1322,8 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Audio
           </button>
           <div className="my-1 h-px bg-white/10" />
-          {providerTracks.map((track) => <button key={track.id} type="button" role="menuitemradio" aria-checked={providerAudio === track.id} className={row} onClick={() => onProviderAudio(track.id)}><Check className={cn("size-4", providerAudio === track.id ? "text-brand" : "opacity-0")} />{track.label}{audioOutput && <span className="ml-auto text-xs text-white/50">{audioOutput}</span>}</button>)}
+          {originalAudioLabel && <button type="button" role="menuitemradio" aria-checked={!providerAudio} className={row} onClick={() => onProviderAudio("")}><Check className={cn("size-4", !providerAudio ? "text-brand" : "opacity-0")} />Original · {originalAudioLabel}</button>}
+          {providerTracks.map((track) => <button key={track.id} type="button" role="menuitemradio" aria-checked={providerAudio === track.id} className={row} onClick={() => onProviderAudio(track.id)}><Check className={cn("size-4", providerAudio === track.id ? "text-brand" : "opacity-0")} />Transcode · {track.label}{audioOutput && <span className="ml-auto text-xs text-white/50">{audioOutput}</span>}</button>)}
           {(providerTracks.length ? [] : streamAudio).map((option) => (
             <button key={option.key} type="button" role="menuitemradio" aria-checked={activeAudio === option.key} className={row} onClick={() => activeAudio !== option.key && onStreamAudio(option.key)}>
               <Check className={cn("size-4", activeAudio === option.key ? "text-brand" : "opacity-0")} />

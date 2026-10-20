@@ -108,8 +108,8 @@ test("Plex provider contract", async (t) => {
   assert.equal((await service.app.request(detail.stream.progressive + "tampered")).status, 403);
  });
  await t.test("proxies DASH templates, subtitles and session cleanup without tokens", async () => {
-  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json(); assert.ok(detail.stream.dash); assert.equal(detail.stream.subtitles[0].format, "vtt");
-  const response = await service.app.request(detail.stream.dash, { headers: { "x-fanoos-base": "/api/b/plex" } }); assert.equal(response.status, 200); const xml = await response.text();
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json(); assert.ok(detail.stream.progressive); assert.equal(detail.stream.subtitles[0].format, "vtt");
+  const response = await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash, { headers: { "x-fanoos-base": "/api/b/plex" } }); assert.equal(response.status, 200); const xml = await response.text();
   assert.ok(!xml.includes("X-Plex-Token")); assert.ok(xml.includes("$Number$")); assert.match(xml, /\/api\/b\/plex\/public\/media\//);
   const media = /media="([^"]+)"/.exec(xml)![1]!.replace("$Number$", "1").replace(/&amp;/g, "&").replace("/api/b/plex", "");
   assert.equal(await (await service.app.request(media)).text(), "segment");
@@ -117,8 +117,8 @@ test("Plex provider contract", async (t) => {
   const burned = await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash + "?subtitle=7"); assert.equal(burned.status, 200);
   assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("subtitles"), "burn");
   assert.ok(requests.some((r) => r.method === "PUT" && r.url.searchParams.get("subtitleStreamID") === "7"));
-  assert.equal((await service.app.request(detail.stream.dash + "?subtitle=999")).status, 403);
-  assert.equal((await service.app.request(detail.stream.session.release, { method: "POST" })).status, 200);
+  assert.equal((await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash + "?subtitle=999")).status, 403);
+  assert.equal((await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.session.release, { method: "POST" })).status, 200);
  });
  await t.test("feed library selection keeps episodes tied to their owning library", async () => {
   const feed = await (await api(`/feed?accounts=${ref}&library=${A}.l.20`)).json();
@@ -128,7 +128,7 @@ test("Plex provider contract", async (t) => {
  await t.test("quality sources distinguish original files from real transcoding targets", async () => {
   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
   const original = detail.stream.sources.find((s: { id: string }) => s.id === "original");
-  assert.equal(original, undefined); // This server/browser path cannot guarantee original HEVC playback.
+  assert.ok(original.stream.progressive); assert.equal(detail.stream.defaultSource, "original");
   const transcode = detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720");
   assert.equal(transcode.kind, "transcode"); assert.equal(transcode.bitrate, 4000000);
   await service.app.request(transcode.stream.dash);
@@ -136,14 +136,16 @@ test("Plex provider contract", async (t) => {
   assert.equal(start.url.searchParams.get("directStream"), "0"); assert.equal(start.url.searchParams.get("videoBitrate"), "4000"); assert.equal(start.url.searchParams.get("videoResolution"), "1280x720");
   assert.equal(detail.stream.sources.some((s: { height: number }) => s.height > 1080), false);
  });
- await t.test("original H.264 with EAC3 keeps video and requests browser-compatible AAC", async () => {
+ await t.test("EAC3 stays original until the viewer explicitly chooses audio conversion", async () => {
   movie.Media[0].audioCodec = "eac3";
   try {
    const detail = await (await api(`/videos/${A}.m.4?accounts=${ref}`)).json();
    const original = detail.stream.sources.find((source: { id: string }) => source.id === "original");
-   assert.equal(detail.stream.defaultSource, "original"); assert.equal(original.stream.progressive, undefined);
-   assert.match(original.description, /audio converted to AAC/);
-   assert.equal((await service.app.request(original.stream.dash)).status, 200);
+   assert.equal(detail.stream.defaultSource, "original"); assert.ok(original.stream.progressive);
+   assert.equal(detail.stream.originalAudio.codec, "eac3");
+   assert.equal(detail.stream.originalAudio.mimeType, 'audio/mp4; codecs="ec-3"');
+   const converted = detail.stream.audioTracks[0].sources.find((source: { id: string }) => source.id === "transcode-auto");
+   assert.equal((await service.app.request(converted.stream.dash)).status, 200);
    const start = requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))!.url;
    assert.equal(start.searchParams.get("directStream"), "1");
    assert.equal(start.searchParams.get("directStreamAudio"), "0");

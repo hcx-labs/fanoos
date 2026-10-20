@@ -221,6 +221,7 @@ export type Stream = {
   /** Explicit provider choices, e.g. original media versus server transcodes. */
   sources?: PlaybackSource[];
   defaultSource?: string;
+  originalAudio?: { label: string; codec: string; mimeType?: string };
   audioTracks?: { id: string; label: string; locale: string; selected?: boolean; sources: PlaybackSource[] }[];
   /** DASH manifest URL (adaptive, all qualities). */
   dash?: string;
