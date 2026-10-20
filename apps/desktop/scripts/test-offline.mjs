@@ -67,13 +67,8 @@ try{
   check(true,'online Downloads library shows completed video');
   check(await evaluate(`!!document.querySelector('[aria-label="Device storage usage"]')?.getAttribute('aria-valuetext')`),'segmented storage meter exposes disk usage, Fanoos downloads and free space');
   check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]')`),'Downloads is always in the online sidebar');
-  await evaluate(`document.querySelector('[data-slot="select-trigger"]').click()`);
-  await wait(`!!document.querySelector('[role="option"]')`);
-  await pause(150);
-  check(await evaluate(`(()=>{const trigger=document.querySelector('[data-slot="select-trigger"]').getBoundingClientRect();const content=document.querySelector('[data-slot="select-content"]');return content.dataset.side==='bottom' && content.getBoundingClientRect().top>=trigger.bottom})()`),'storage dropdown opens below its trigger');
-  await evaluate(`Array.from(document.querySelectorAll('[role="option"]')).find(o=>o.textContent==='50 GB').click()`);
-  await wait(`window.fanoosDesktop.downloads.list().then(l=>l.limitBytes===50*1024**3)`);
-  check(true,'shared storage Select updates the persisted limit');
+  check(await evaluate(`!document.querySelector('main [data-slot="select-trigger"]') && !document.querySelector('main input') && getComputedStyle(document.querySelector('article').parentElement).display==='grid'`),'Downloads uses a grid without storage selector or search field');
+  check(await evaluate(`(()=>{const play=document.querySelector('[aria-label^="Play "]');const remove=document.querySelector('[aria-label^="Remove "]');const thumbnail=play.parentElement;const p=play.getBoundingClientRect(), t=thumbnail.getBoundingClientRect(), r=remove.getBoundingClientRect();return getComputedStyle(play).borderWidth==='0px' && Math.abs(p.width-t.width)<1 && Math.abs(p.height-t.height)<1 && r.right<t.right && r.top>t.top && !Array.from(document.querySelectorAll('main button')).some(b=>b.textContent==='Play')})()`),'thumbnail overlay fills its bounds and Delete sits inside the top right');
   await evaluate(`window.downloadsMainBeforeNavigation=document.querySelector('main');document.querySelector('main section h2 a').click()`);
   await wait(`location.search.includes('group=') && document.querySelector('h1')?.textContent==='jawed'`);
   check(await evaluate(`!!document.querySelector('[aria-label="Downloaded channels and shows"] a[aria-current="page"]')`),'sidebar opens the selected channel with an active state and heading');
@@ -84,7 +79,7 @@ try{
   await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(b=>b.textContent==='Cancel').click()`);
   await wait(`!document.querySelector('[role="dialog"]')`);
   check(true,'shared removal Dialog cancels without deleting the download');
-  await evaluate(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Play').click()`);
+  await evaluate(`document.querySelector('[aria-label^="Play "]').click()`);
   await wait(`location.pathname.startsWith('/downloads/') && document.querySelector('video')?.readyState>=2`);
   check(await evaluate(`!window.fanoosDesktop.offline && !!document.querySelector('aside a[href$="/downloads"]')`),'online local playback keeps normal app navigation');
   await stop();
@@ -108,7 +103,7 @@ try{
   await wait(`document.querySelector('video')?.readyState>=2`);
   await evaluate(`document.querySelector('aside a[href$="/downloads"]').click()`);
   await wait(`!!document.querySelector('[aria-label^="Play "]')`);
-  await evaluate(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Play').click()`);
+  await evaluate(`document.querySelector('[aria-label^="Play "]').click()`);
   await wait(`document.querySelector('video')?.readyState>=2`);
   const detail=await evaluate(`({duration:document.querySelector('video').duration,src:document.querySelector('video').currentSrc,subtitles:document.querySelector('video').textTracks.length})`);
   check(detail.duration>18 && detail.duration<21,'offline DASH audio/video load with expected duration');
