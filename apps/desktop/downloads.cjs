@@ -84,10 +84,10 @@ class Downloads {
   free() { const disk = fs.statfsSync(this.root); return Number(disk.bavail) * Number(disk.bsize); }
   view(item) {
     const { id, videoId, video, channel, status, quality, audio, received, total, createdAt, downloadedAt, error, warning } = item;
-    return { id, videoId, video: { ...video, thumbnail: item.hasThumbnail ? `fanoos-offline://app/media/${id}/thumbnail` : video.thumbnail }, channel, status, quality, audio, received, total, createdAt, downloadedAt, error, warning };
+    return { id, videoId, video: { ...video, thumbnail: item.hasThumbnail ? `fanoos-offline://app/media/${id}/thumbnail` : video.thumbnail }, channel: { ...channel, avatar: item.hasAvatar ? `fanoos-offline://app/media/${id}/channel-avatar` : channel.avatar }, status, quality, audio, received, total, createdAt, downloadedAt, error, warning };
   }
   list() {
-    return { items: this.data.items.filter((i) => i.scope === this.context?.scope).map((i) => this.view(i)), usedBytes: this.used(), freeBytes: this.free(), limitBytes: this.data.limitBytes, profileName: this.context?.profileName ?? '', server: this.context?.server ?? '' };
+    return { items: this.data.items.filter((i) => i.scope === this.context?.scope).map((i) => this.view(i)), usedBytes: this.used(), freeBytes: this.free(), totalDiskBytes: (() => { const disk = fs.statfsSync(this.root); return Number(disk.blocks) * Number(disk.bsize); })(), limitBytes: this.data.limitBytes, profileName: this.context?.profileName ?? '', server: this.context?.server ?? '' };
   }
   setLimit(bytes) {
     if (!Number.isSafeInteger(bytes) || bytes < GiB || bytes > 500 * GiB) throw new Error('Choose a storage limit between 1 and 500 GB.');

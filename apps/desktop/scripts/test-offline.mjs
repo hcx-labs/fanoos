@@ -62,9 +62,10 @@ try{
   const item=await wait(`window.fanoosDesktop.downloads.list().then(l=>l.items.find(i=>['complete','failed'].includes(i.status)))`,120000);
   check(item.status==='complete',`real YouTube download completed${item.error?': '+item.error:''}`);
   console.log(JSON.stringify({id:item.id,bytes:item.received,quality:item.quality,dataDirectory:root}));
-  await send('Page.navigate',{url:server+'/downloads'});await wait(`document.body.textContent.includes('Available offline')`);
+  await send('Page.navigate',{url:server+'/downloads'});await wait(`!!document.querySelector('[aria-label^="Play "]')`);
   const screenshot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(`${root}/online.png`,Buffer.from(screenshot.data,'base64'));
   check(true,'online Downloads library shows completed video');
+  check(await evaluate(`document.querySelector('[aria-label="Offline storage usage"]')?.getAttribute('aria-valuenow') !== null && document.querySelector('[aria-label="Device disk usage"]')?.getAttribute('aria-valuenow') !== null`),'storage meters expose download limit and disk usage');
   check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]')`),'Downloads is always in the online sidebar');
   await evaluate(`document.querySelector('[data-slot="select-trigger"]').click()`);
   await wait(`!!document.querySelector('[role="option"]')`);
@@ -76,6 +77,7 @@ try{
   await evaluate(`document.querySelector('[aria-label="Downloaded channels and shows"] a').click()`);
   await wait(`location.search.includes('group=') && document.querySelector('h1')?.textContent==='jawed'`);
   check(await evaluate(`!!document.querySelector('[aria-label="Downloaded channels and shows"] a[aria-current="page"]')`),'sidebar opens the selected channel with an active state and heading');
+  check(await evaluate(`!!document.querySelector('main [data-slot=avatar]') && document.querySelector('main').textContent.includes('1 saved video') && document.querySelector('article').classList.contains('flex-col')`),'selected channel has an avatar, saved-video summary and video grid');
   await evaluate(`document.querySelector('[aria-label^="Remove "]').click()`);
   await wait(`!!document.querySelector('[role="dialog"]') && document.querySelector('[role="dialog"]').textContent.includes('Remove download?')`);
   await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(b=>b.textContent==='Cancel').click()`);
@@ -88,7 +90,7 @@ try{
   proxy.closeAllConnections();await new Promise(r=>proxy.close(r));
   check(true,'disconnected only the isolated test server; user stack remains running');
   await launch();
-  await wait(`location.protocol==='fanoos-offline:' && document.body.textContent.includes('Available offline')`);
+  await wait(`location.protocol==='fanoos-offline:' && !!document.querySelector('[aria-label^="Play "]')`);
   check(true,'cold launch without server opens bundled offline library');
   check(await evaluate(`!!document.querySelector('aside a[href$="/downloads"]') && !!document.querySelector('.top-bar')`),'offline shell preserves sidebar and top bar');
   await evaluate(`document.querySelector('aside a[href$="/library"]').click()`);
@@ -104,7 +106,7 @@ try{
   await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
   await wait(`document.querySelector('video')?.readyState>=2`);
   await evaluate(`document.querySelector('aside a[href$="/downloads"]').click()`);
-  await wait(`document.body.textContent.includes('Available offline')`);
+  await wait(`!!document.querySelector('[aria-label^="Play "]')`);
   await evaluate(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Play').click()`);
   await wait(`document.querySelector('video')?.readyState>=2`);
   const detail=await evaluate(`({duration:document.querySelector('video').duration,src:document.querySelector('video').currentSrc,subtitles:document.querySelector('video').textTracks.length})`);

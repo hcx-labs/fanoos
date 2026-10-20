@@ -43,6 +43,7 @@ export type DownloadLibrary = {
   items: OfflineDownload[];
   usedBytes: number;
   freeBytes: number;
+  totalDiskBytes: number;
   limitBytes: number;
   profileName: string;
   server: string;
