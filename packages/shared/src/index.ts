@@ -104,8 +104,9 @@ export type Channel = Via & {
   url?: string;
   provider: ProviderKind;
   /** "series" for shows with seasons and episodes. Defaults to "channel". */
-  kind?: "channel" | "series" | "library";
+  kind?: "channel" | "series" | "movie" | "library";
   libraryType?: "movies" | "shows";
+  year?: number;
   /** Portrait key art (shows). */
   poster?: string;
   name: string;
@@ -167,6 +168,7 @@ export type Video = Via & {
   viewsApprox?: boolean;
   /** ISO timestamp. */
   published: string;
+  addedAt?: string;
   description: string;
   thumbnail: string;
   live?: boolean;
@@ -199,6 +201,8 @@ export type Subtitle = {
   url: string;
   /** "ass" needs a styled renderer; "vtt" plays natively. */
   format: "ass" | "vtt";
+  /** Embedded track rendered by the provider during transcoding. */
+  render?: "server";
 };
 
 export type PlaybackSource = {
@@ -217,6 +221,7 @@ export type Stream = {
   /** Explicit provider choices, e.g. original media versus server transcodes. */
   sources?: PlaybackSource[];
   defaultSource?: string;
+  audioTracks?: { id: string; label: string; locale: string; selected?: boolean; sources: PlaybackSource[] }[];
   /** DASH manifest URL (adaptive, all qualities). */
   dash?: string;
   /** Encrypted streams: licence server URLs per DRM system, called by the browser's own CDM. */

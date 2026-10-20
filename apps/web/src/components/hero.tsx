@@ -113,9 +113,9 @@ export function Hero({ videos }: { videos: Video[] }) {
 
           <div key={itemKey(video)} className="animate-in fade-in slide-in-from-bottom-3 absolute inset-x-0 bottom-0 p-5 text-white duration-700 sm:p-8 lg:p-10">
             <div className="flex items-center gap-2.5 text-sm">
-              <ChannelAvatar name={video.channelName} src={video.channelAvatar} className="size-8 ring-2 ring-white/20" textClassName="text-[11px]" />
+              {video.kind !== "movie" && <ChannelAvatar name={video.channelName} src={video.channelAvatar} className="size-8 ring-2 ring-white/20" textClassName="text-[11px]" />}
               <Link to={paths.channelOf(video)} className="font-semibold hover:underline">
-                {video.channelName}
+                {video.kind === "movie" ? "Movie" : video.channelName}
               </Link>
               {formatAgo(video.published) && (
                 <>
@@ -198,7 +198,7 @@ function HeroTitle({ video }: { video: Video }) {
   const title = useVideoTitle(video);
   return (
     <h2 className="font-display mt-3 max-w-3xl text-2xl leading-tight font-semibold text-balance drop-shadow-sm sm:text-4xl">
-      <Link to={paths.watch(video)} className="hover:underline hover:decoration-white/40 hover:underline-offset-4">
+      <Link to={video.kind === "movie" ? paths.channelOf(video) : paths.watch(video)} className="hover:underline hover:decoration-white/40 hover:underline-offset-4">
         {title}
       </Link>
     </h2>

@@ -6,7 +6,7 @@ import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { begin, poll, accountView } from "./auth.ts";
 import { account, forgetServers, json, request, serverFor, servers } from "./client.ts";
-import { libraryChannel, showChannel, video } from "./catalog.ts";
+import { libraryChannel, showChannel, movieChannel, video } from "./catalog.ts";
 import { itemId, parseId } from "./ids.ts";
 import { mediaRoutes, playback } from "./playback.ts";
 import type { Server } from "./types.ts";
@@ -40,9 +40,7 @@ async function detail(ref: string, server: Server, key: string): Promise<VideoDe
   if (!show) throw fail(404, "Plex show not found.", "not_found"); channel = showChannel(ref, server, show);
   if (item.parentRatingKey) { const siblings = (await json(server, `/library/metadata/${item.parentRatingKey}/children?${pageQuery(Math.max(0, (item.index ?? 1) - 1))}`)).MediaContainer.Metadata ?? []; next = siblings.filter((v) => (v.index ?? 0) > (item.index ?? 0)).map((v) => video(ref, server, v)); }
  } else {
-  const sections = (await json(server, "/library/sections")).MediaContainer.Directory ?? [];
-  const library = sections.find((l) => l.key === String(item.librarySectionID ?? data.librarySectionID));
-  if (!library) throw fail(404, "Plex library not found.", "not_found"); channel = libraryChannel(ref, server, library);
+  channel = movieChannel(ref, server, item);
  }
  return { video: result, channel, next, stream: playback(ref, server, item) };
 }
@@ -64,7 +62,7 @@ export function createPlexService() {
    const libraries = ((await json(server, "/library/sections")).MediaContainer.Directory ?? []).filter((l) => ["movie", "show"].includes(l.type) && (!selectedLibrary || itemId(server.id, l.key, true) === selectedLibrary));
    return (await Promise.all(libraries.map(async (library) => ((await json(server, `/library/sections/${library.key}/all?${pageQuery(0, { type: library.type === "movie" ? "1" : "4", sort: "addedAt:desc" })}`)).MediaContainer.Metadata ?? []).map((item) => video(ref, server, { ...item, librarySectionTitle: library.title }, library.key))))).flat();
   }));
-  return c.json(merge(rows.flat()).sort((a, b) => b.published.localeCompare(a.published)).slice(0, 200));
+  return c.json(merge(rows.flat()).sort((a, b) => (b.addedAt ?? b.published).localeCompare(a.addedAt ?? a.published)).slice(0, 200));
  });
  v1.get("/continue", async (c) => c.json(merge((await Promise.all((await targets(refs(c))).map(async ({ ref, server }) => ((await json(server, "/library/onDeck")).MediaContainer.Metadata ?? []).filter((v) => (v.viewOffset ?? 0) > 0).map((v) => video(ref, server, v))))).flat())));
  v1.get("/calendar", (c) => c.json([]));
@@ -88,7 +86,8 @@ export function createPlexService() {
    const data = (await json(server, `/library/sections/${id.key}/all?${pageQuery(start, { sort: "titleSort:asc", ...(q ? { title: q } : {}) })}`)).MediaContainer;
    const items = data.Metadata ?? []; page = { channel: libraryChannel(ref, server, library), videos: library.type === "movie" ? items.filter((i) => i.type === "movie").map((i) => video(ref, server, { ...i, librarySectionTitle: library.title }, library.key)) : [], channels: library.type === "show" ? items.filter((i) => i.type === "show").map((i) => showChannel(ref, server, i)) : undefined, next: start + items.length < (data.totalSize ?? items.length) ? String(start + items.length) : undefined };
   } else {
-   const show = (await json(server, `/library/metadata/${id.key}`)).MediaContainer.Metadata?.[0]; if (!show || show.type !== "show") throw fail(404, "Plex show not found.", "not_found");
+   const show = (await json(server, `/library/metadata/${id.key}`)).MediaContainer.Metadata?.[0]; if (show?.type === "movie") return c.json({ channel: movieChannel(ref, server, show), videos: [video(ref, server, show)] });
+   if (!show || show.type !== "show") throw fail(404, "Plex show not found.", "not_found");
    const seasons = (await json(server, `/library/metadata/${id.key}/children`)).MediaContainer.Metadata ?? [];
    const sections = seasons.filter((s) => s.type === "season").map((s) => ({ id: itemId(server.id, s.ratingKey), label: s.title, count: s.leafCount }));
    const selected = c.req.query("section") || sections[0]?.id; const season = selected && sections.find((s) => s.id === selected); if (selected && !season) throw fail(400, "Choose a season of this show.");
@@ -122,7 +121,7 @@ export function createPlexService() {
   const { server } = await target(refs(c), match[1]!);
   const item = (await json(server, `/library/metadata/${key[1]}`)).MediaContainer.Metadata?.[0];
   if (!item) throw fail(404, "Plex item not found.");
-  return c.json({ type: item.type === "show" || item.type === "season" ? "channel" : "video", id: itemId(match[1]!, item.type === "season" ? item.parentRatingKey || key[1]! : key[1]!) });
+  return c.json({ type: item.type === "show" || item.type === "season" || item.type === "movie" ? "channel" : "video", id: itemId(match[1]!, item.type === "season" ? item.parentRatingKey || key[1]! : key[1]!) });
  });
  return service;
 }

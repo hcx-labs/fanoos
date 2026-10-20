@@ -129,8 +129,17 @@ export const languageLabel = (locale: string) => {
 export function Player({ video, stream: inputStream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
   const [selectedSource, setSelectedSource] = useState(inputStream.defaultSource ?? "");
-  const currentSource = inputStream.sources?.find((source) => source.id === selectedSource) ?? inputStream.sources?.find((source) => source.id === inputStream.defaultSource);
-  const stream = currentSource ? { ...inputStream, dash: undefined, progressive: undefined, session: undefined, ...currentSource.stream } : inputStream;
+  const [providerAudio, setProviderAudio] = useState("");
+  const providerTracks = inputStream.audioTracks ?? [];
+  const [serverSubtitle, setServerSubtitle] = useState("");
+  const providerTrack = providerTracks.find((track) => track.id === providerAudio) ?? (serverSubtitle ? providerTracks.find((track) => track.selected) ?? providerTracks[0] : undefined);
+  const playbackSources = (providerTrack?.sources ?? inputStream.sources)?.filter((source) => !serverSubtitle || source.kind === "transcode");
+  const currentSource = playbackSources?.find((source) => source.id === selectedSource) ?? playbackSources?.find((source) => source.id === inputStream.defaultSource) ?? playbackSources?.find((source) => source.id === "transcode-1080") ?? playbackSources?.[0];
+  let stream = currentSource ? { ...inputStream, dash: undefined, progressive: undefined, session: undefined, ...currentSource.stream } : inputStream;
+  if (serverSubtitle && stream.dash) {
+    const selected = (url?: string) => url ? `${url}${url.includes("?") ? "&" : "?"}subtitle=${encodeURIComponent(serverSubtitle)}` : undefined;
+    stream = { ...stream, dash: selected(stream.dash), session: stream.session ? { ...stream.session, keepAlive: selected(stream.session.keepAlive), release: selected(stream.session.release) } : undefined };
+  }
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLVideoElement>(null);
@@ -158,6 +167,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
   const versions = video.episode?.versions ?? [];
   const chooseSubtitle = useCallback((id: string) => {
     setSubtitle(id);
+    setServerSubtitle(subtitles.find((t) => subtitleKey(t) === id)?.render === "server" ? id : "");
     actions.trackPrefs(scopes, { subtitles: subtitles.find((t) => subtitleKey(t) === id)?.locale ?? "" });
   }, [subtitles, scopes]);
   useEffect(() => {
@@ -165,6 +175,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
     // Reset only for a new subtitle list/default, not when persisting a manual/ASR choice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subtitles, settings.captions, video.episode?.audio]);
+  useEffect(() => { setServerSubtitle(subtitles.find((t) => subtitleKey(t) === subtitle)?.render === "server" ? subtitle : ""); }, [subtitle, subtitles]);
   const [streamAudio, setStreamAudio] = useState<AudioOption[]>([]);
   const [activeAudio, setActiveAudio] = useState("");
   const chooseStreamAudio = useCallback((key: string) => {
@@ -392,7 +403,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
   const assRestyled = useRef(false);
   useEffect(() => {
     const el = media.current;
-    if (!el || !track) return;
+    if (!el || !track || track.render === "server") return;
     if (track.format === "vtt") return attachVtt(el, track, setVttTrack, () => {
       toast.error("Subtitles couldn't be loaded", { description: "Turn subtitles off and select the track again to retry." });
     });
@@ -1038,7 +1049,10 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
                     versions={versions}
                     audio={video.episode?.audio}
                     onAudio={switchAudio}
-                    sources={inputStream.sources}
+                    sources={playbackSources}
+                    providerTracks={providerTracks}
+                    providerAudio={providerAudio || providerTracks.find((track) => track.selected)?.id || providerTracks[0]?.id || ""}
+                    onProviderAudio={setProviderAudio}
                     selectedSource={currentSource?.id}
                     onSource={setSelectedSource}
                     heights={heights}
@@ -1128,6 +1142,7 @@ function SettingsPanel({
   onAudio,
   sources,
   selectedSource,
+  providerTracks, providerAudio, onProviderAudio,
   onSource,
   heights,
   playingHeight,
@@ -1151,6 +1166,9 @@ function SettingsPanel({
   onAudio: (id: string, audio: string) => void;
   sources?: PlaybackSource[];
   selectedSource?: string;
+  providerTracks: NonNullable<Stream["audioTracks"]>;
+  providerAudio: string;
+  onProviderAudio: (id: string) => void;
   onSource: (id: string) => void;
   heights: number[];
   playingHeight: number | null;
@@ -1174,10 +1192,10 @@ function SettingsPanel({
     >
       {view === "main" && (
         <>
-          {(versions.length > 1 || streamAudio.length > 1) && (
+          {(versions.length > 1 || streamAudio.length > 1 || providerTracks.length > 0) && (
             <button type="button" className={row} onClick={() => onView("audio")}>
               <AudioLines className="size-4 text-white/70" /> Audio
-              <span className="ml-auto truncate text-white/60">{streamAudio.find((o) => o.key === activeAudio)?.label ?? (audio ? languageLabel(audio) : "Original")}</span>
+              <span className="ml-auto truncate text-white/60">{providerTracks.find((track) => track.id === providerAudio)?.label ?? streamAudio.find((o) => o.key === activeAudio)?.label ?? (audio ? languageLabel(audio) : "Original")}</span>
               <ChevronRight className="size-4 text-white/40" />
             </button>
           )}
@@ -1272,10 +1290,11 @@ function SettingsPanel({
             <button key={subtitleKey(t) || "off"} type="button" role="menuitemradio" aria-checked={subtitle === subtitleKey(t)} className={row} onClick={() => onSubtitle(subtitleKey(t))}>
               <Check className={cn("size-4", subtitle === subtitleKey(t) ? "text-brand" : "opacity-0")} />
               {t.label}
+              {"render" in t && t.render === "server" && <span className="ml-auto text-xs text-white/50">Transcode</span>}
             </button>
           ))}
           <div className="my-1 h-px bg-white/10" />
-          <button type="button" className={row} onClick={() => onView("subtitleStyle")}>
+          <button type="button" className={row} disabled={subtitles.find((t) => subtitleKey(t) === subtitle)?.render === "server"} onClick={() => onView("subtitleStyle")}>
             <Palette className="size-4 text-white/70" /> Style
             <ChevronRight className="ml-auto size-4 text-white/40" />
           </button>
@@ -1296,7 +1315,8 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Audio
           </button>
           <div className="my-1 h-px bg-white/10" />
-          {streamAudio.map((option) => (
+          {providerTracks.map((track) => <button key={track.id} type="button" role="menuitemradio" aria-checked={providerAudio === track.id} className={row} onClick={() => onProviderAudio(track.id)}><Check className={cn("size-4", providerAudio === track.id ? "text-brand" : "opacity-0")} />{track.label}</button>)}
+          {(providerTracks.length ? [] : streamAudio).map((option) => (
             <button key={option.key} type="button" role="menuitemradio" aria-checked={activeAudio === option.key} className={row} onClick={() => activeAudio !== option.key && onStreamAudio(option.key)}>
               <Check className={cn("size-4", activeAudio === option.key ? "text-brand" : "opacity-0")} />
               {option.label}

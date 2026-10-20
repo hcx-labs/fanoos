@@ -9,10 +9,10 @@ const A = "a".repeat(40), B = "b".repeat(40);
 const requests: { url: URL; headers: Headers; method: string }[] = [];
 const realFetch = globalThis.fetch;
 let linked = false; let resourceFailure = false;
-const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", Stream: [] }] }] };
+const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, originallyAvailableAt: "2001-12-19", year: 2001, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", Stream: [] }] }] };
 const show = { ratingKey: "1", type: "show", title: "Test Show", leafCount: 1, thumb: "/library/metadata/1/thumb/1" };
 const season = { ratingKey: "2", type: "season", title: "Season 1", parentRatingKey: "1", leafCount: 1 };
-const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", Stream: [{ id: 7, streamType: 3, codec: "srt", key: "/library/streams/7", language: "English", languageCode: "en" }] }] }] };
+const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", Stream: [{ id: 8, streamType: 2, languageCode: "ja", displayTitle: "Japanese", selected: true }, { id: 9, streamType: 2, languageCode: "en", displayTitle: "English" }, { id: 7, streamType: 3, codec: "srt", language: "English", languageCode: "en" }, { id: 10, streamType: 3, codec: "srt", key: "/library/streams/10", languageCode: "en", displayTitle: "English (external)" }] }] }] };
 const container = (data: object) => Response.json({ MediaContainer: data });
 globalThis.fetch = async (input, init) => {
  const url = new URL(String(input)); const headers = new Headers(init?.headers); requests.push({ url, headers, method: init?.method || "GET" });
@@ -40,8 +40,9 @@ globalThis.fetch = async (input, init) => {
   return new Response(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><BaseURL>/video/:/transcode/universal/session/${sid}/dash/?X-Plex-Token=must-not-leak</BaseURL><Period><AdaptationSet><Representation id="0"><SegmentTemplate initialization="init.mp4" media="chunk-$Number$.m4s" /></Representation></AdaptationSet></Period></MPD>`, { headers: { "content-type": "application/dash+xml" } });
  }
  if (url.pathname.includes("/chunk-1.m4s")) return new Response("segment", { headers: { "content-type": "video/mp4" } });
+ if (url.pathname === "/library/parts/33" && init?.method === "PUT") return new Response(null, { status: 200 });
  if (url.pathname === "/library/parts/44/file.mp4") return new Response("part", { status: 206, headers: { "content-range": "bytes 0-3/4", "content-type": "video/mp4" } });
- if (url.pathname === "/library/streams/7") return new Response("WEBVTT\n", { headers: { "content-type": "text/vtt" } });
+ if (url.pathname === "/library/streams/10") return new Response("WEBVTT\n", { headers: { "content-type": "text/vtt" } });
  if (url.pathname === "/:/timeline" || url.pathname.endsWith("/ping") || url.pathname.endsWith("/stop")) return new Response(null, { status: 200 });
  throw Error(`Unexpected fixture path ${url.pathname}`);
 };
@@ -78,6 +79,24 @@ test("Plex provider contract", async (t) => {
   assert.equal((await api(`/channels/${A}.m.1?accounts=${ref}&section=${B}.m.2`)).status, 400);
   const movies = await (await api(`/channels/${A}.l.10?accounts=${ref}`)).json(); assert.equal(movies.videos[0].title, "Test Movie");
  });
+ await t.test("movies have their own detail parent and release dates", async () => {
+  const page = await (await api(`/channels/${A}.m.4?accounts=${ref}`)).json();
+  assert.equal(page.channel.kind, "movie"); assert.equal(page.channel.name, "Test Movie");
+  assert.equal(page.videos.length, 1); assert.equal(page.sections, undefined);
+  assert.equal(page.videos[0].channelId, page.channel.id);
+  assert.equal(page.videos[0].published, "2001-12-19T00:00:00.000Z");
+  assert.notEqual(page.videos[0].addedAt, page.videos[0].published);
+ });
+ await t.test("embedded subtitles and selected audio get scoped playback routes", async () => {
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
+  assert.equal(detail.stream.subtitles.length, 2);
+  assert.equal((await service.app.request(detail.stream.subtitles[1].url)).status, 200);
+  assert.deepEqual(detail.stream.audioTracks.map((track: { label: string }) => track.label), ["Japanese", "English"]);
+  const track = detail.stream.audioTracks[1];
+  assert.ok(track.sources.every((source: { kind: string }) => source.kind === "transcode"));
+  assert.equal((await service.app.request(track.sources[0].stream.dash)).status, 200);
+  assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("audioStreamID"), "9");
+ });
  await t.test("searches libraries and returns continue-watching progress", async () => {
   const search = await (await api(`/search?accounts=${ref}&q=Test`)).json(); assert.equal(search.channels.length, 2); assert.equal(search.videos.length, 4);
   const resumed = await (await api(`/continue?accounts=${ref}`)).json(); assert.equal(resumed[0].progress, 5);
@@ -94,7 +113,11 @@ test("Plex provider contract", async (t) => {
   assert.ok(!xml.includes("X-Plex-Token")); assert.ok(xml.includes("$Number$")); assert.match(xml, /\/api\/b\/plex\/public\/media\//);
   const media = /media="([^"]+)"/.exec(xml)![1]!.replace("$Number$", "1").replace(/&amp;/g, "&").replace("/api/b/plex", "");
   assert.equal(await (await service.app.request(media)).text(), "segment");
-  assert.equal((await service.app.request(detail.stream.subtitles[0].url)).status, 200);
+  assert.equal(detail.stream.subtitles[0].render, "server");
+  const burned = await service.app.request(detail.stream.dash + "?subtitle=7"); assert.equal(burned.status, 200);
+  assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("subtitles"), "burn");
+  assert.ok(requests.some((r) => r.method === "PUT" && r.url.searchParams.get("subtitleStreamID") === "7"));
+  assert.equal((await service.app.request(detail.stream.dash + "?subtitle=999")).status, 403);
   assert.equal((await service.app.request(detail.stream.session.release, { method: "POST" })).status, 200);
  });
  await t.test("feed library selection keeps episodes tied to their owning library", async () => {

@@ -67,7 +67,7 @@ contentRoutes.get("/feed", async (c) => {
   );
   if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
   const videos = items.filter((v) => (!group || groups.get(`${v.backend}:${v.channelId}`) === group) && (!library || v.libraryId === library));
-  return c.json(videos.sort((a, b) => b.published.localeCompare(a.published)));
+  return c.json(videos.sort((a, b) => (b.addedAt ?? b.published).localeCompare(a.addedAt ?? a.published)));
 });
 
 /** What followed channels and shows released in [from, to), oldest first (the Calendar). */

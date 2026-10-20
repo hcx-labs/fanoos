@@ -51,7 +51,7 @@ export function ChannelPage() {
 
   if (page?.channel.kind === "library") return <LibraryPage page={page} loading={state.status === "loading"} error={state.error} reload={reload} loadMore={() => void loadMore()} loadingMore={loadingMore} moreError={moreError} query={filter} onQuery={setFilter} onSearch={() => setQuery(filter.trim())} />;
 
-  if (page?.channel.kind === "series")
+  if ((page?.channel.kind === "series" || page?.channel.kind === "movie"))
     return <ShowPage page={page} muted={muted} loading={state.status === "loading"} error={state.error} onRetry={reload} onSection={setSection} onLoadMore={() => void loadMore()} loadingMore={loadingMore} moreError={moreError} />;
 
   if (state.status === "loading" && !page)
@@ -245,7 +245,7 @@ function ShowPage({ page, muted, loading, error, onRetry, onSection, onLoadMore,
             <ServiceMark backend={channel.backend} label className="text-muted-foreground text-xs font-medium" />
             <h1 className="font-display mt-1 text-3xl font-semibold text-balance sm:text-5xl">{channel.name}</h1>
             <p className="text-muted-foreground mt-2 text-sm">
-              {[sections.length > 1 ? `${sections.length} seasons` : null, channel.videoCount ? `${channel.videoCount} episodes` : null].filter(Boolean).join(" · ")}
+              {channel.kind === "movie" ? [next?.year, next?.duration ? formatDuration(next.duration) : null, next?.rating].filter(Boolean).join(" · ") : [channel.year, sections.length > 1 ? `${sections.length} seasons` : null, channel.videoCount ? `${channel.videoCount} episodes` : null].filter(Boolean).join(" · ")}
             </p>
             {channel.description && <p className="mt-4 line-clamp-4 max-w-2xl text-sm leading-relaxed text-pretty">{channel.description}</p>}
             <div className="mt-6 flex flex-wrap items-center gap-2">
@@ -274,7 +274,7 @@ function ShowPage({ page, muted, loading, error, onRetry, onSection, onLoadMore,
         </div>
       </div>
 
-      <div className="page pt-0">
+      {channel.kind !== "movie" && <div className="page pt-0">
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <p role="alert" className="text-destructive text-sm">{error.message} Showing the previously loaded season.</p>
@@ -320,7 +320,7 @@ function ShowPage({ page, muted, loading, error, onRetry, onSection, onLoadMore,
         {moreError && <p role="alert" className="text-destructive mt-4 text-sm">{moreError.message}</p>}
         {page.next && <Button variant="outline" className="mt-6 rounded-full" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? "Loading…" : "Load more episodes"}</Button>}
         {!loading && !videos.length && <p className="text-muted-foreground mt-6 text-sm">No episodes in this season yet.</p>}
-      </div>
+      </div>}
     </div>
   );
 }

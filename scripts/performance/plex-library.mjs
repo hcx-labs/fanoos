@@ -20,14 +20,15 @@ await send("Page.addScriptToEvaluateOnNewDocument", { source: readFileSync(new U
   if(p==='/api/feed'){
    window.__lastFeedLibrary=u.searchParams.get('library');
    if(u.searchParams.get('backend')==='youtube')return Response.json([{...video('y1'),backend:'youtube',provider:'youtube',episode:undefined,category:'Music'},{...video('y2'),backend:'youtube',provider:'youtube',episode:undefined,category:'Science'}]);
-   const ep={...video('1'),libraryId:root+'.l.20'},movie={...video('9'),kind:'movie',title:'Example Movie',libraryId:root+'.l.10',year:2024,poster:art,episode:undefined};
+   const ep={...video('1'),libraryId:root+'.l.20'},movie={...video('9'),kind:'movie',channelId:root+'.m.9',title:'Example Movie',libraryId:root+'.l.10',year:2024,poster:art,episode:undefined};
    return Response.json([ep,movie].filter(v=>!u.searchParams.get('library')||v.libraryId===u.searchParams.get('library')));
   }
   if(p.endsWith('/followers'))return Response.json(['plex-account']);
   if(p==='/api/v/plex/channels/'+root+'.l.20')return Response.json({channel,videos:[],channels:u.searchParams.get('next')?[show(2)]:[show(1)],next:u.searchParams.get('next')?undefined:'50'});
-  if(p==='/api/v/plex/channels/'+root+'.l.10')return Response.json({channel:{...channel,id:root+'.l.10',name:'Movies',libraryType:'movies'},videos:[{...video('9'),title:'Example Movie',kind:'movie',year:2024,poster:art,episode:undefined}]});
+  if(p==='/api/v/plex/channels/'+root+'.l.10')return Response.json({channel:{...channel,id:root+'.l.10',name:'Movies',libraryType:'movies'},videos:[{...video('9'),title:'Example Movie',channelId:root+'.m.9',kind:'movie',year:2024,poster:art,episode:undefined}]});
+  if(p==='/api/v/plex/channels/'+root+'.m.9')return Response.json({channel:{...show(9),kind:'movie',name:'Example Movie'},videos:[{...video('9'),title:'Example Movie',kind:'movie',year:2024,episode:undefined}]});
   if(p==='/api/v/plex/channels/'+root+'.m.1')return Response.json({channel:show(1),sections:[{id:'s1',label:'Season 1',count:3},{id:'s2',label:'Season 2',count:1}],section:u.searchParams.get('section')||'s1',videos:u.searchParams.get('section')==='s2'?[video('4')]:u.searchParams.get('next')?[video('2'),video('3')]:[video('1'),video('2')],next:u.searchParams.get('next')||u.searchParams.get('section')==='s2'?undefined:'50'});
-  if(p==='/api/v/plex/videos/'+root+'.m.9')return Response.json({video:{...video('9'),kind:'movie',year:2024,title:'Example Movie'},channel:{...channel,id:root+'.l.10',name:'Movies'},next:[],stream:{defaultSource:'original',sources:[{id:'original',kind:'original',label:'Original · 1080p',description:'Direct play · MP4 · H264 · AAC',height:1080,bitrate:12000000,stream:{}},{id:'transcode-720',kind:'transcode',label:'720p',description:'Transcode · 4 Mbps · H.264 / AAC',height:720,bitrate:4000000,stream:{}}]}});
+  if(p==='/api/v/plex/videos/'+root+'.m.9')return Response.json({video:{...video('9'),kind:'movie',year:2024,title:'Example Movie'},channel:{...channel,id:root+'.l.10',name:'Movies'},next:[],stream:{subtitles:[{id:'7',locale:'en',label:'English (ASS)',format:'vtt',render:'server',url:''}],audioTracks:[{id:'8',locale:'en',label:'English',selected:true,sources:[{id:'transcode-720',kind:'transcode',label:'720p',stream:{}}]},{id:'9',locale:'ja',label:'Japanese',sources:[{id:'transcode-720',kind:'transcode',label:'720p',stream:{}}]}],defaultSource:'original',sources:[{id:'original',kind:'original',label:'Original · 1080p',description:'Direct play · MP4 · H264 · AAC',height:1080,bitrate:12000000,stream:{}},{id:'transcode-720',kind:'transcode',label:'720p',description:'Transcode · 4 Mbps · H.264 / AAC',height:720,bitrate:4000000,stream:{}}]}});
   return baseFetch(input,init);
  };
 })();` });
@@ -47,11 +48,15 @@ await wait(`document.querySelectorAll('main ol li').length===3`);
 await evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Season 2')).click()`);
 await wait(`document.querySelectorAll('main ol li').length===1 && document.querySelector('main ol').textContent.includes('Episode 4')`);
 await send('Page.navigate',{url:`${process.env.PERF_URL || "http://localhost:5180"}/channel/plex/${A}.l.10`});
-await wait(`document.querySelector('h1')?.textContent==='Movies' && !!document.querySelector('main a[href="/watch/plex/${A}.m.9"]')`);
+await wait(`document.querySelector('h1')?.textContent==='Movies' && !!document.querySelector('main a[href="/channel/plex/${A}.m.9"]')`);
 await send('Page.navigate',{url:`${process.env.PERF_URL || "http://localhost:5180"}/movies`});
-await wait(`document.querySelector('h1')?.textContent==='Movies' && !!document.querySelector('main a[href="/watch/plex/${A}.m.9"]')`);
+await wait(`document.querySelector('h1')?.textContent==='Movies' && !!document.querySelector('main a[href="/channel/plex/${A}.m.9"]')`);
 assert.ok(await evaluate(`document.querySelector('aside a[href="/movies"]')?.textContent.includes('Movies')`));
 assert.ok(await evaluate(`document.querySelector('main').textContent.includes('2024')`));
+await evaluate(`document.querySelector('main a[href="/channel/plex/${A}.m.9"]').click()`);
+await wait(`document.querySelector('h1')?.textContent==='Example Movie'`);
+assert.equal(await evaluate(`document.querySelectorAll('main ol li').length`),0);
+assert.ok(await evaluate(`document.querySelector('main a[href="/watch/plex/${A}.m.9"]')?.textContent.includes('Play')`));
 writeFileSync('/tmp/fanoos-plex-movies.png',Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
 await send('Page.navigate',{url:`${process.env.PERF_URL || "http://localhost:5180"}/`});
 await wait(`!!document.querySelector('[aria-label="Service"]')`);
@@ -78,5 +83,16 @@ assert.ok(await evaluate(`document.querySelector('[role="menu"]').textContent.in
 await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('720p')).click()`);
 await wait(`document.querySelector('[role="menu"]').textContent.includes('720p · Transcode')`);
 console.log('PASS: Plex Original/transcode labels, bitrate details and source selection');
+await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b.textContent.trim().startsWith('Audio')).click()`);
+await wait(`document.querySelector('[role="menu"]').textContent.includes('Japanese')`);
+await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('Japanese')).click()`);
+assert.ok(await evaluate(`document.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent.includes('Japanese')`));
+await evaluate(`document.querySelector('[role="menu"] button').click()`);
+await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b.textContent.trim().startsWith('Subtitles')).click()`);
+await wait(`document.querySelector('[role="menu"]').textContent.includes('English (ASS)')`);
+await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('English (ASS)')).click()`);
+assert.ok(await evaluate(`document.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent.includes('English (ASS)')`));
+console.log('PASS: Plex reuses existing Audio and Subtitles menus, selects languages and marks server-rendered subtitles as transcodes');
+
 console.log('PASS: Plex TV library grid, nested show navigation, library pagination, episode pagination/deduplication, season switching movie poster cards and dedicated Movies navigation');
 close();

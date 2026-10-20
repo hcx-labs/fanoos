@@ -1,20 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
-import type { PlaybackSource, Stream } from "@tube/shared";
+import type { PlaybackSource, Stream, Subtitle } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { seal, open } from "./crypto.ts";
 import { request, serverFor } from "./client.ts";
 import { rewriteManifest } from "./manifest.ts";
 import type { PlexItem, Server } from "./types.ts";
-type Ticket = { ref: string; server: string; path?: string; session?: string; key?: string; height?: number; bitrate?: number };
+type Ticket = { ref: string; server: string; path?: string; session?: string; key?: string; height?: number; bitrate?: number; audio?: number; part?: number; subtitles?: number[]; subtitle?: number };
 const ttl = 8 * 3600;
-export function playback(ref: string, server: Server, item: PlexItem): Stream {
+// Plex stores stream selection per account/part. Keep selection and session creation together.
+const selections = new Map<string, Promise<void>>();
+async function selecting<T>(key: string, run: () => Promise<T>): Promise<T> {
+ const previous = selections.get(key) ?? Promise.resolve();
+ let release!: () => void;
+ const gate = new Promise<void>((resolve) => { release = resolve; });
+ const pending = previous.then(() => gate);
+ selections.set(key, pending);
+ await previous;
+ try { return await run(); } finally { release(); if (selections.get(key) === pending) selections.delete(key); }
+}
+export function playback(ref: string, server: Server, item: PlexItem, audio?: number): Stream {
  const media = item.Media?.[0]; const part = media?.Part?.[0];
  if (!part) return { unavailable: { code: "unplayable", reason: "Plex could not find a playable media file." } };
- const subtitles = (part.Stream ?? []).filter((s) => s.streamType === 3 && s.key && ["srt", "webvtt", "ass", "ssa", "mov_text"].includes(s.codec || "")).map((s) => ({ id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Subtitles", format: "vtt" as const, url: `/public/subtitle/${seal({ ref, server: server.id, path: `/library/streams/${s.id}?format=vtt` }, ttl)}` }));
+ const subtitles: Subtitle[] = (part.Stream ?? []).filter((s) => s.streamType === 3).map((s) => ({ id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Subtitles", format: "vtt" as const, ...(!s.key || !["srt", "webvtt", "ass", "ssa", "mov_text"].includes(s.codec || "") ? { render: "server" as const, url: "" } : { url: `/public/subtitle/${seal({ ref, server: server.id, path: `/library/streams/${s.id}?format=vtt` }, ttl)}` }) }));
  const height = media?.videoResolution === "4k" ? 2160 : Number(media?.videoResolution) || media?.height || 1080;
  const sources: PlaybackSource[] = [];
- if (media?.Part?.length === 1) sources.push({
+ if (audio === undefined && media?.Part?.length === 1) sources.push({
   id: "original", kind: "original", label: `Original · ${height}p`, height, bitrate: (media.bitrate ?? 0) * 1000,
   description: `Direct play · ${[media.container?.toUpperCase(), media.videoCodec?.toUpperCase(), media.audioCodec?.toUpperCase()].filter(Boolean).join(" · ")}`,
   mimeType: media.container === "mp4" ? "video/mp4" : media.container === "webm" ? "video/webm" : "video/x-matroska",
@@ -23,12 +34,13 @@ export function playback(ref: string, server: Server, item: PlexItem): Stream {
  for (const [target, kbps] of [[2160, 20000], [1080, 8000], [720, 4000], [480, 1500], [360, 800]] as const) {
   if (target > height) continue;
   const session = randomUUID();
-  const ticket = seal({ ref, server: server.id, session, key: item.ratingKey, height: target, bitrate: kbps }, ttl);
+  const ticket = seal({ ref, server: server.id, session, key: item.ratingKey, height: target, bitrate: kbps, audio, part: part.id, subtitles: subtitles.filter((s) => s.render === "server").map((s) => Number(s.id)) }, ttl);
   sources.push({ id: `transcode-${target}`, kind: "transcode", label: `${target}p`, height: target, bitrate: kbps * 1000, description: `Transcode · ${kbps / 1000} Mbps · H.264 / AAC`, stream: { dash: `/public/play/${ticket}/manifest.mpd`, session: { keepAlive: `/public/play/${ticket}/ping`, release: `/public/play/${ticket}/release`, everySeconds: 45 } } });
  }
  const compatible = media?.container === "mp4" && media.videoCodec === "h264" && ["aac", "mp3"].includes(media.audioCodec || "");
  const initial = (compatible ? sources.find((s) => s.id === "original") : undefined) ?? sources.find((s) => s.id === "transcode-1080") ?? sources.find((s) => s.kind === "transcode") ?? sources[0]!;
- return { ...initial.stream, sources, defaultSource: initial.id, subtitles };
+ const audioTracks = audio === undefined ? (part.Stream ?? []).filter((s) => s.streamType === 2).map((s) => ({ id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Original", selected: Boolean(s.selected), sources: playback(ref, server, item, s.id).sources! })) : undefined;
+ return { ...initial.stream, sources, defaultSource: initial.id, subtitles, audioTracks };
 }
 export const mediaRoutes = new Hono<ServiceEnv>();
 function read(token: string): Ticket {
@@ -37,7 +49,7 @@ function read(token: string): Ticket {
  return data;
 }
 function startPath(ticket: Ticket): string {
- return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: "0", videoCodec: "h264", audioCodec: "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: "none", session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, "X-Plex-Client-Profile-Extra": "add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=h264&audioCodec=aac)" })}`;
+ return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: "0", videoCodec: "h264", audioCodec: "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: ticket.subtitle !== undefined ? "burn" : "none", ...(ticket.audio !== undefined ? { audioStreamID: String(ticket.audio) } : {}), session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, "X-Plex-Client-Profile-Extra": "add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=h264&audioCodec=aac)" })}`;
 }
 async function stream(server: Server, resource: string, method: string, range?: string, type?: string, signal?: AbortSignal) {
  const res = await request(server, resource, { method, headers: range ? { range } : {}, signal });
@@ -63,10 +75,25 @@ mediaRoutes.get("/image/:ticket", async (c) => {
  return new Response(res.body, { headers: { "content-type": res.headers.get("content-type")!, "cache-control": "private, max-age=3600" } });
 });
 mediaRoutes.get("/play/:ticket/manifest.mpd", async (c) => {
- const token = c.req.param("ticket"); const ticket = read(token);
+ let token = c.req.param("ticket"); const ticket = read(token);
  if (!ticket.session || !ticket.key) throw fail(403, "Invalid playback session.");
  const server = await serverFor(ticket.ref, ticket.server);
- const resource = startPath(ticket); const res = await request(server, resource);
+ const subtitle = c.req.query("subtitle");
+ if (subtitle !== undefined) {
+  if (!/^\d+$/.test(subtitle) || !ticket.subtitles?.includes(Number(subtitle))) throw fail(403, "Invalid subtitle selection.");
+  ticket.subtitle = Number(subtitle);
+  ticket.session += `-s${subtitle}`;
+  token = seal(ticket, ttl);
+ }
+ const resource = startPath(ticket);
+ const res = await selecting(`${ticket.ref}:${ticket.server}:${ticket.part}`, async () => {
+ if (ticket.part && (ticket.audio !== undefined || ticket.subtitle !== undefined)) {
+  const selection = new URLSearchParams({ ...(ticket.audio !== undefined ? { audioStreamID: String(ticket.audio) } : {}), ...(ticket.subtitle !== undefined ? { subtitleStreamID: String(ticket.subtitle) } : {}) });
+  const selected = await request(server, `/library/parts/${ticket.part}?${selection}`, { method: "PUT" });
+  if (!selected.ok) throw fail(502, "Plex could not select this audio or subtitle track.");
+ }
+ return request(server, resource);
+ });
  if (!res.ok) throw fail(502, `Plex could not start playback (${res.status}). Check remote-playback access and your server's transcoder.`, "upstream");
  const scope = `/video/:/transcode/universal/session/${ticket.session}/`;
  const xml = rewriteManifest(await res.text(), server.url, resource, (path) => {
@@ -85,6 +112,11 @@ mediaRoutes.on(["GET", "HEAD"], "/media/:ticket/*", async (c) => {
 });
 for (const action of ["ping", "release"]) mediaRoutes.post(`/play/:ticket/${action}`, async (c) => {
  const ticket = read(c.req.param("ticket")); if (!ticket.session) throw fail(403, "Invalid playback session.");
+ const subtitle = c.req.query("subtitle");
+ if (subtitle !== undefined) {
+  if (!/^\d+$/.test(subtitle) || !ticket.subtitles?.includes(Number(subtitle))) throw fail(403, "Invalid subtitle selection.");
+  ticket.session += `-s${subtitle}`;
+ }
  const server = await serverFor(ticket.ref, ticket.server);
  const resource = action === "release" ? `/video/:/transcode/universal/stop?session=${ticket.session}` : `/video/:/transcode/universal/session/${ticket.session}/ping`;
  const res = await request(server, resource);
