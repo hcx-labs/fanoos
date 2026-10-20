@@ -75,7 +75,7 @@ export function ChannelRail() {
       </nav>
 
       {downloaded ? <DownloadedChannels /> : <>
-      <div className="mt-8 mb-2 flex items-center justify-between px-3">
+      <div className="mt-8 mb-2 flex items-baseline justify-between px-3">
         <h2 className="text-sm font-semibold">{heading}</h2>
         <Link to={browse} className="text-muted-foreground hover:text-foreground text-xs">
           Browse
