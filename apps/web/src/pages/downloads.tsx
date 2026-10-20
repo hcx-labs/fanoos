@@ -75,7 +75,7 @@ export function DownloadsPage() {
     <PageHeader
       className="mb-6"
       title="Downloads"
-      description={library?.profileName ? `Saved on this device for ${library.profileName}.` : "Sign in to your server to start downloading YouTube videos."}
+      description="Your videos, ready to watch offline."
       actions={!window.fanoosDesktop?.offline && <Button variant="outline" className="rounded-full" onClick={() => void bridge.open()}><HardDrive className="size-4" />Open offline library</Button>}
     />
     {error && <p role="alert" className="text-destructive mb-4 text-sm">{error}</p>}
