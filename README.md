@@ -161,14 +161,12 @@ credentials; the authorization can also be revoked in Plex's Authorized Devices.
   cache (two minutes, five minutes and one minute respectively), scoped by server
   and account credentials. Playback details and continue-watching bypass it; signed
   playback URLs and sessions are generated fresh.
-- Embedded and external text subtitles are extracted with FFmpeg and rendered by
-  Fanoos: ASS retains styles; other text tracks become WebVTT. The first selection
-  reads the source container on the backend without re-encoding or saving the
-  video/audio. Subtitle text is cached for seven days in the same Redis-backed
-  SharedCache used by YouTube and Crunchyroll.
-  Large remote files can take longer and consume extra backend-to-Plex bandwidth.
-  Native installs need FFmpeg on PATH (or `FFMPEG_PATH`); the Plex Docker image
-  includes it. No automatic burn-in fallback is used for failed text extraction.
+- Embedded text subtitles use Plex's native subtitle-only endpoint after media
+  decision negotiation. Plex returns ASS for Fanoos's existing renderer; external
+  subtitles use Plex's stream endpoint. No media-file scan or backend FFmpeg is
+  involved, and subtitle requests do not change audio/video quality or saved track
+  preferences. Subtitle text uses the shared Redis cache for seven days. Image
+  subtitles retain the explicit Plex burn-in option.
 
 The backend must be able to reach each Plex server from its own network (including
 from inside Docker). HTTPS certificates remain verified. Direct-play media must be

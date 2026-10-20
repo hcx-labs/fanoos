@@ -1,8 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type { Subtitle } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
@@ -11,94 +7,100 @@ import { seal, open } from "./crypto.ts";
 import { request, serverFor } from "./client.ts";
 import type { PlexItem, PlexPart, Server } from "./types.ts";
 
-type Format = "ass" | "webvtt";
-type Ticket = { ref: string; server: string; path: string; map: string; format: Format; cache: string };
+type Ticket = { ref: string; server: string; key: string; part: number; stream: number; external: boolean; format: "ass" | "vtt"; cache: string };
 const textCodecs = new Set(["srt", "subrip", "webvtt", "ass", "ssa", "mov_text", "text"]);
 const maxFile = 16 * 1024 * 1024;
-const textCache = new SharedCache<string>("text-subtitles-v1", { ttlSeconds: 7 * 86400, staleSeconds: 0 });
-const failures = new SharedCache<string>("text-subtitle-errors-v1", { ttlSeconds: 30, staleSeconds: 0 });
+const textCache = new SharedCache<string>("text-subtitles-native-v2", { ttlSeconds: 7 * 86400, staleSeconds: 0 });
+const failures = new SharedCache<string>("text-subtitle-errors-native-v2", { ttlSeconds: 30, staleSeconds: 0 });
 
 export function subtitleTracks(ref: string, server: Server, item: PlexItem, part: PlexPart): Subtitle[] {
- const embedded = (part.Stream ?? []).filter((s) => s.streamType === 3 && !s.key);
  return (part.Stream ?? []).filter((s) => s.streamType === 3).map((s) => {
   const base = { id: String(s.id), locale: s.languageCode || "und", label: s.displayTitle || s.language || "Subtitles" };
   if (!textCodecs.has(s.codec || "")) return { ...base, format: "vtt", render: "server", url: "" };
-  const format: Format = ["ass", "ssa"].includes(s.codec || "") ? "ass" : "webvtt";
-  const path = s.key ? `/library/streams/${s.id}` : part.key;
-  const map = s.key ? "0:0" : s.index !== undefined && s.index >= 0 ? `0:${s.index}` : `0:s:${embedded.indexOf(s)}`;
-  const cache = createHash("sha256").update(JSON.stringify([ref, server.id, path, part.size, item.updatedAt, s.id, map, format])).digest("hex");
-  return { ...base, format: format === "ass" ? "ass" : "vtt", url: `/public/text-subtitle/${seal({ ref, server: server.id, path, map, format, cache }, 8 * 3600)}` };
+  // Plex's subtitle-only transcoder emits ASS for embedded text, including SRT.
+  const format = !s.key || ["ass", "ssa"].includes(s.codec || "") ? "ass" : "vtt";
+  const cache = createHash("sha256").update(JSON.stringify([ref, server.id, item.ratingKey, part.id, part.size, item.updatedAt, s.id, format])).digest("hex");
+  return { ...base, format, url: `/public/text-subtitle/${seal({ ref, server: server.id, key: String(item.ratingKey), part: Number(part.id), stream: Number(s.id), external: Boolean(s.key), format, cache } satisfies Ticket, 8 * 3600)}` };
  });
 }
 
-/** Only subtitles are written; video/audio are never re-encoded or saved. */
-export async function extractSubtitle(load: (method: string, range: string | undefined, signal: AbortSignal) => Promise<Response>, map: string, format: Format): Promise<Buffer> {
- if (!/^0:(s:)?\d+$/.test(map)) throw fail(403, "Invalid subtitle track.");
- const abort = new AbortController();
- const route = `/${randomUUID()}`;
- // FFmpeg can seek using Range requests without receiving Plex credentials or private URLs.
- const bridge = createServer(async (req, res) => {
-  if (req.url !== route || !["GET", "HEAD"].includes(req.method || "")) { res.writeHead(404).end(); return; }
-  const upstream = new AbortController();
-  const stop = () => upstream.abort();
-  abort.signal.addEventListener("abort", stop, { once: true });
-  res.once("close", stop);
-  try {
-   const response = await load(req.method!, req.headers.range, upstream.signal);
-   if (![200, 206, 416].includes(response.status)) { res.writeHead(502).end(); return; }
-   const headers: Record<string, string> = {};
-   for (const key of ["content-type", "content-length", "content-range", "accept-ranges"]) { const value = response.headers.get(key); if (value) headers[key] = value; }
-   res.writeHead(response.status, headers);
-   if (response.body && req.method !== "HEAD") await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), res);
-   else res.end();
-  } catch { if (!res.headersSent) res.writeHead(502); res.end(); }
-  finally { abort.signal.removeEventListener("abort", stop); }
+export function subtitleParams(key: string, stream: number, session: string): URLSearchParams {
+ return new URLSearchParams({
+  path: `/library/metadata/${key}`, mediaIndex: "0", partIndex: "0", hasMDE: "1",
+  protocol: "http", directPlay: "1", directStream: "1", directStreamAudio: "1",
+  subtitleStreamID: String(stream), subtitles: "sidecar", advancedSubtitles: "text",
+  session, "X-Plex-Session-Identifier": session, "X-Plex-Session-Id": randomUUID(),
+  "X-Plex-Client-Profile-Name": "Generic", offset: "0", copyts: "1", fastSeek: "1",
+  mediaBufferSize: "102400", location: "lan", subtitleSize: "100", audioBoost: "100",
+  videoQuality: "100", maxVideoBitrate: "100000", videoResolution: "1920x1080",
+  "X-Plex-Client-Profile-Extra": "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mkv&videoCodec=h264,hevc&audioCodec=aac,ac3,eac3&subtitleCodec=ass,srt)+add-transcode-target(type=subtitleProfile&context=all&protocol=http&container=ass&subtitleCodec=ass)+add-settings(DirectPlayStreamSelection=true)",
  });
- await new Promise<void>((resolve, reject) => { bridge.once("error", reject); bridge.listen(0, "127.0.0.1", resolve); });
+}
+
+async function subtitleText(response: Response): Promise<string> {
+ if (!response.ok || !response.body) throw fail(502, "Plex could not serve this subtitle track. Select it again to retry.");
+ const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
  try {
-  const address = bridge.address();
-  if (!address || typeof address === "string") throw fail(502, "Subtitle extraction could not start.");
-  return await new Promise<Buffer>((resolve, reject) => {
-   const child = spawn(process.env.FFMPEG_PATH || "ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-rw_timeout", "15000000", "-i", `http://127.0.0.1:${address.port}${route}`, "-map", map, "-vn", "-an", "-dn", "-c:s", format === "ass" ? "ass" : "webvtt", "-f", format, "pipe:1"], { stdio: ["ignore", "pipe", "ignore"] });
-   const chunks: Buffer[] = []; let size = 0; let timedOut = false;
-   const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); abort.abort(); }, 600_000);
-   child.stdout.on("data", (chunk: Buffer) => { size += chunk.length; if (size > maxFile) child.kill("SIGKILL"); else chunks.push(chunk); });
-   child.once("error", () => { clearTimeout(timer); reject(fail(503, "Subtitle extraction needs FFmpeg on the Plex backend. Set FFMPEG_PATH if it is not on PATH.")); });
-   child.once("close", (code) => {
-    clearTimeout(timer);
-    if (code !== 0 || size > maxFile) { reject(fail(502, timedOut ? "Subtitle extraction took too long. Select the track again to retry." : "This subtitle track could not be extracted. Select it again to retry.")); return; }
-    const output = Buffer.concat(chunks);
-    const text = output.toString("utf8");
-    if (!(format === "ass" ? text.includes("[Events]") : text.startsWith("WEBVTT"))) { reject(fail(502, "Plex returned an invalid subtitle track.")); return; }
-    resolve(output);
-   });
-  });
- } finally { abort.abort(); bridge.closeAllConnections(); await new Promise<void>((resolve) => bridge.close(() => resolve())); }
+  while (true) {
+   const { value, done } = await reader.read(); if (done) break;
+   size += value.length;
+   if (size > maxFile) throw fail(502, "Plex returned an oversized subtitle track.");
+   chunks.push(value);
+  }
+ } finally { await reader.cancel().catch(() => {}); }
+ return Buffer.concat(chunks).toString("utf8").replace(/^\uFEFF/, "");
 }
 
-async function cached(ticket: Ticket): Promise<Buffer> {
- const text = await textCache.get(ticket.cache, async () => {
-  const server = await serverFor(ticket.ref, ticket.server);
-  const result = await extractSubtitle((method, range, signal) => request(server, ticket.path, { method, headers: range ? { range } : {}, signal }), ticket.map, ticket.format);
-  return result.toString("utf8");
- });
- return Buffer.from(text, "utf8");
+export async function loadSubtitle(server: Server, ticket: Pick<Ticket, "key" | "part" | "stream" | "external" | "format">): Promise<string> {
+ if (ticket.external) {
+  const body = await subtitleText(await request(server, `/library/streams/${ticket.stream}?encoding=utf-8&format=${ticket.format === "ass" ? "ass" : "vtt"}`));
+  if (ticket.format === "ass") {
+   if (!body.includes("[Events]")) throw fail(502, "Plex returned an invalid ASS subtitle.");
+   return body;
+  }
+  if (body.startsWith("WEBVTT")) return body;
+  // Some PMS versions return SRT despite format=vtt; this changes only subtitle timestamps.
+  if (!/^\d{2}:\d{2}:\d{2},\d{3} --> /m.test(body)) throw fail(502, "Plex returned an invalid text subtitle.");
+  return `WEBVTT\n\n${body.replace(/\r\n?/g, "\n").replace(/^(\d{2}:\d{2}:\d{2}),(\d{3})( --> \d{2}:\d{2}:\d{2}),(\d{3})/gm, "$1.$2$3.$4")}\n`;
+ }
+ const session = randomBytes(12).toString("hex");
+ const params = subtitleParams(ticket.key, ticket.stream, session);
+ const signal = AbortSignal.timeout(90_000);
+ try {
+  // Match Plex Web's direct-play path: negotiate first, then start only subtitles.
+  // DirectPlayStreamSelection makes this session-local; no PUT changes account preferences.
+  const response = await request(server, `/video/:/transcode/universal/decision?${params}`, { signal });
+  if (!response.ok) throw fail(502, "Plex could not prepare this subtitle track.");
+  const { MediaContainer: decision } = await response.json() as { MediaContainer: { generalDecisionCode?: number; transcodeDecisionCode?: number; Metadata?: PlexItem[] } };
+  if (Number(decision.generalDecisionCode ?? 0) >= 2000 || Number(decision.transcodeDecisionCode ?? 0) >= 2000) throw fail(502, "Plex rejected subtitle playback for this item.");
+  const selected = decision.Metadata?.[0]?.Media?.[0]?.Part?.find((p) => Number(p.id) === Number(ticket.part))?.Stream?.find((s) => s.streamType === 3 && s.selected);
+  if (!selected || String(selected.id) !== String(ticket.stream)) throw fail(502, "Plex could not select the requested subtitle track.");
+  const text = await subtitleText(await request(server, `/subtitles/:/transcode/universal/start?${params}`, { signal }));
+  if (!text.includes("[Script Info]") || !text.includes("[Events]")) throw fail(502, "Plex returned an invalid ASS subtitle.");
+  return text;
+ } finally {
+  // This ID belongs only to the subtitle request, never the video's playback session.
+  await request(server, `/video/:/transcode/universal/stop?session=${session}`, { signal: AbortSignal.timeout(5000) }).then((r) => r.body?.cancel()).catch(() => {});
+ }
+}
+
+async function cached(ticket: Ticket): Promise<string> {
+ return textCache.get(ticket.cache, async () => loadSubtitle(await serverFor(ticket.ref, ticket.server), ticket));
 }
 export const subtitleRoutes = new Hono<ServiceEnv>();
 subtitleRoutes.get("/text-subtitle/:ticket", async (c) => {
  const ticket = open<Ticket>(c.req.param("ticket"));
- if (!ticket || !ticket.ref || !ticket.server || !/^[a-f0-9]{64}$/.test(ticket.cache) || !["ass", "webvtt"].includes(ticket.format) || !/^0:(s:)?\d+$/.test(ticket.map) || !/^\/library\/(parts\/\d+\/|streams\/\d+$)/.test(ticket.path)) throw fail(403, "This subtitle link expired. Reload the page.");
+ if (!ticket || !ticket.ref || !ticket.server || !/^\d+$/.test(ticket.key) || !Number.isInteger(ticket.part) || !Number.isInteger(ticket.stream) || !/^[a-f0-9]{64}$/.test(ticket.cache) || !["ass", "vtt"].includes(ticket.format) || typeof ticket.external !== "boolean") throw fail(403, "This subtitle link expired. Reload the page.");
  await serverFor(ticket.ref, ticket.server);
  const ready = (await textCache.getMany([ticket.cache])).values.get(ticket.cache);
  if (ready === undefined) {
   const error = (await failures.getMany([ticket.cache])).values.get(ticket.cache);
   if (error) { await failures.delete(ticket.cache); throw fail(502, error); }
-  // SharedCache de-duplicates the background extraction; polling never holds a proxy open.
   void cached(ticket).catch(async (error: { res?: Response }) => {
    const detail = await error.res?.json().catch(() => null) as { error?: string } | undefined;
-   await failures.setMany([[ticket.cache, detail?.error || "This subtitle track could not be extracted. Select it again to retry."]]);
+   await failures.setMany([[ticket.cache, detail?.error || "Plex could not load this subtitle. Select it again to retry."]]);
   }).catch(() => {});
-  return c.json({ pending: true }, 202, { "retry-after": "2", "cache-control": "no-store" });
+  return c.json({ pending: true }, 202, { "retry-after": "1", "cache-control": "no-store" });
  }
  return new Response(ready, { headers: { "content-type": ticket.format === "ass" ? "text/x-ssa; charset=utf-8" : "text/vtt; charset=utf-8", "cache-control": "private, max-age=3600" } });
 });

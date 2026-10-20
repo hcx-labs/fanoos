@@ -138,7 +138,7 @@ test("Plex provider contract", async (t) => {
   assert.equal((await service.app.request(detail.stream.progressive + "tampered")).status, 403);
  });
  await t.test("proxies DASH templates, subtitles and session cleanup without tokens", async () => {
-  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json(); assert.ok(detail.stream.progressive); assert.equal(detail.stream.subtitles[0].format, "vtt");
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json(); assert.ok(detail.stream.progressive); assert.equal(detail.stream.subtitles[0].format, "ass");
   const response = await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash, { headers: { "x-fanoos-base": "/api/b/plex" } }); assert.equal(response.status, 200); const xml = await response.text();
   assert.ok(!xml.includes("X-Plex-Token")); assert.ok(xml.includes("$Number$")); assert.match(xml, /\/api\/b\/plex\/public\/media\//);
   const media = /media="([^"]+)"/.exec(xml)![1]!.replace("$Number$", "1").replace(/&amp;/g, "&").replace("/api/b/plex", "");

@@ -408,17 +408,17 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
     const abort = new AbortController();
     const id = `subtitle-${key}`;
     let objectUrl: string | undefined;
-    toast.loading("Preparing subtitles…", { id });
+    toast.loading("Loading subtitles…", { id });
     void (async () => {
       let response: Response;
       const started = Date.now();
       do {
         response = await fetch(selectedSubtitle.url, { signal: abort.signal });
         if (response.status !== 202) break;
-        if (Date.now() - started > 11 * 60_000) throw new Error("Preparation took too long. Select this track again to retry.");
+        if (Date.now() - started > 100_000) throw new Error("Plex took too long to load subtitles. Select this track again to retry.");
         await new Promise<void>((resolve, reject) => {
           const stop = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
-          const timer = setTimeout(() => { abort.signal.removeEventListener("abort", stop); resolve(); }, 2000);
+          const timer = setTimeout(() => { abort.signal.removeEventListener("abort", stop); resolve(); }, 1000);
           if (abort.signal.aborted) stop(); else abort.signal.addEventListener("abort", stop, { once: true });
         });
       } while (!abort.signal.aborted);
