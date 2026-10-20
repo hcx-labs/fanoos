@@ -55,7 +55,7 @@ export function ConnectAccount({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold">{b.info!.name}</span>
-                    <span className="text-muted-foreground block text-xs">{linked ? `${linked} linked` : b.info!.link.method === "device" ? "Sign in with a code" : "Sign in with Google"}</span>
+                    <span className="text-muted-foreground block text-xs">{linked ? `${linked} linked` : b.info!.link.method === "device" ? "Sign in with a code" : `Sign in with ${b.info!.kind === "youtube" ? "Google" : b.info!.name}`}</span>
                   </span>
                 </button>
               );

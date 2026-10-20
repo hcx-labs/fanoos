@@ -100,7 +100,7 @@ export function Thumbnail({ video, className, size = "md" }: { video: Video; cla
 
 function Meta({ video, className }: { video: Video; className?: string }) {
   // Episodes say where they sit in the show; videos say how many watched them.
-  const lead = video.episode ? episodeLabel(video.episode) : formatViews(video);
+  const lead = video.kind === "movie" ? video.year : video.episode ? episodeLabel(video.episode) : formatViews(video);
   return (
     <p className={cn("text-muted-foreground flex items-center gap-1.5 text-xs", className)}>
       <ServiceMark backend={video.backend} />

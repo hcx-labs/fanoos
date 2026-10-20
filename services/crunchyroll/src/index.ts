@@ -211,19 +211,21 @@ v1.get("/following", async (c) =>
         for (const item of items) {
           const m = item.panel?.episode_metadata;
           if (!m?.series_id) continue;
+          const lastActivity = Date.parse(m.premium_available_date ?? m.availability_starts ?? "") / 1000 || undefined;
           const seen = merged.get(m.series_id);
           const fresh = Date.now() - Date.parse(m.premium_available_date ?? m.availability_starts ?? 0) < NEW_WINDOW && !item.fully_watched ? 1 : 0;
           if (seen) {
             if (!seen.via.includes(ref)) seen.via.push(ref);
             seen.unseen = Math.max(seen.unseen, fresh);
-          } else merged.set(m.series_id, { id: m.series_id, provider: "crunchyroll", kind: "series", name: m.series_title ?? "", unseen: fresh, via: [ref] });
+            seen.lastActivity = Math.max(seen.lastActivity ?? 0, lastActivity ?? 0) || undefined;
+          } else merged.set(m.series_id, { id: m.series_id, provider: "crunchyroll", kind: "series", name: m.series_title ?? "", lastActivity, unseen: fresh, via: [ref] });
         }
       }
       if (refs[0] && merged.size) {
         const details = await seriesMany(refs[0], [...merged.keys()]);
         for (const [id, f] of merged) {
           const d = details.get(id);
-          if (d) merged.set(id, { ...d, unseen: f.unseen, via: f.via });
+          if (d) merged.set(id, { ...d, lastActivity: f.lastActivity, unseen: f.unseen, via: f.via });
         }
       }
       return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));

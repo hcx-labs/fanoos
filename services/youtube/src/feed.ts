@@ -165,6 +165,7 @@ export async function subscriptions(refs: string[], refresh = false): Promise<(C
   // Count recent uploads from whatever RSS is already cached or quick to fetch.
   await mapLimit(channels, 8, async (c) => {
     const entries = await rss(c.id).catch(() => []);
+    c.lastActivity = Math.max(0, ...entries.filter((e) => !e.short).map((e) => Date.parse(e.published) / 1000).filter(Number.isFinite)) || undefined;
     c.unseen = entries.filter((e) => !e.short && Date.now() - Date.parse(e.published) < NEW_WINDOW).length;
   });
   return channels;

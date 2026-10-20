@@ -7,13 +7,15 @@
 
 <h1 align="center">Fanoos</h1>
 
-<p align="center">One feed for YouTube and Crunchyroll. No recommendations, no ads, no tracking. Self-hosted.</p>
+<p align="center">One feed for YouTube, Crunchyroll and Plex. No recommendations, no ads, no tracking. Self-hosted.</p>
 
 ![Home: a merged feed with a rotating hero](docs/screenshots/home.jpg)
 
 *Fanoos* (فانوس) is Persian/Urdu for "lantern". *Fanoos-e-khayal*, the "lantern of imagination", was the revolving magic lantern that cast moving pictures before cinema.
 
-A self-hosted video client that puts several services in one place: your YouTube subscriptions and your Crunchyroll watchlist in a single feed, with no recommendations, no ads and no tracking. YouTube is watched signed out through your own server; Crunchyroll (which only works signed in) plays its DRM-protected streams in your own browser.
+A self-hosted video client for your YouTube subscriptions, Crunchyroll watchlist, and movies and TV from your own or shared Plex servers. Browse Channels, Shows and Movies, search across services, and keep watch history and playback settings together without a recommendation feed.
+
+Use the web app in a browser or connect the [desktop app](apps/desktop/README.md) to the same Fanoos server. The desktop app also saves YouTube videos for offline playback, including captions, descriptions, chapters and SponsorBlock segments.
 
 ## Screenshots
 
@@ -26,15 +28,15 @@ A self-hosted video client that puts several services in one place: your YouTube
 | ![A show with seasons and episodes](docs/screenshots/show.jpg) | ![Search across services](docs/screenshots/search.jpg) |
 | **Shows** with seasons and episodes | **Search** across every service |
 | ![Following: channels and shows](docs/screenshots/following.jpg) | ![Linked accounts per service](docs/screenshots/settings-accounts.jpg) |
-| **Following:** channels and shows, grouped and hideable | **Linked accounts** on every service |
+| **Sources:** manage channels and saved shows, grouped and hideable | **Linked accounts** on every service |
 
 ## Model
 
 - **Fanoos account:** your own sign-in (passkeys, password, or single sign-on). It holds everything below and syncs it across devices: history, positions, Watch later, preferences.
-- **Backend:** a separate service that talks to one provider: `services/youtube`, `services/crunchyroll`. Fanoos core talks to every backend through one generic [provider protocol](packages/shared/src/protocol.ts) and has no provider-specific code.
+- **Backend:** a separate service that talks to one provider: `services/youtube`, `services/crunchyroll`, `services/plex`. Fanoos core talks to every backend through one generic [provider protocol](packages/shared/src/protocol.ts).
 - **Linked account:** an account on a provider, linked through its backend. A Fanoos account can hold many, across services. The backend keeps the credentials; core keeps only an opaque reference.
-- **The merged feed:** what every linked account follows (YouTube subscriptions, Crunchyroll watchlists) merged into one feed, with each item marked with the accounts it came through.
-- **Actions:** liking, commenting and following act as the default account on that service; the follow control and comment box let you pick another.
+- **The merged feed:** YouTube subscriptions, Crunchyroll watchlists and Plex libraries merged into one feed, with each item marked with the accounts it came through. Plex items are curated by release date, never by when a server imported them.
+- **Actions:** supported actions such as liking, commenting and following act as the default account on that service; the follow control and comment box let you pick another. Plex library membership is read-only in Fanoos.
 
 ## Running it
 
@@ -44,18 +46,41 @@ npm install
 cp apps/server/.env.example apps/server/.env
 cp services/youtube/.env.example services/youtube/.env
 cp services/crunchyroll/.env.example services/crunchyroll/.env   # optional
+cp services/plex/.env.example services/plex/.env               # Plex servers and shared libraries
 npm run dev
 ```
 
-`npm run dev` starts Redis (:6379), the streaming companion (:8282), the YouTube backend (:8788), the Crunchyroll backend (:8789), Fanoos core (:8787) and the web app (:5180). Open **http://localhost:5180** (not 127.0.0.1: passkeys need a hostname) and create an account. The first account is the server's owner.
+`npm run dev` starts Redis (:6379), the streaming companion (:8282), the YouTube backend (:8788), the Crunchyroll backend (:8789), the Plex backend (:8790), Fanoos core (:8787) and the web app (:5180). Open **http://localhost:5180** (not 127.0.0.1: passkeys need a hostname) and create an account. The first account is the server's owner.
 
 Needs Node 24+, [Deno](https://deno.com) (`brew install deno`) for the streaming companion, and Redis (`brew install redis`).
 
-Core and every backend share one secret, `BACKEND_TOKEN`: set the same random value in all three `.env` files (`openssl rand -base64 32`). Core finds the backends through `BACKENDS` (`slug=url` pairs; the slug appears in app URLs, e.g. `/watch/youtube/<id>`).
+Core and every backend share one secret, `BACKEND_TOKEN`: set the same random value in core and each enabled backend’s `.env` file (`openssl rand -base64 32`). Core finds the backends through `BACKENDS` (`slug=url` pairs; the slug appears in app URLs, e.g. `/watch/youtube/<id>`).
+
+## Desktop app
+
+The [Electron desktop client](apps/desktop/README.md) runs on macOS, Windows and Linux using castLabs Electron for Content Security. It connects to your existing Fanoos server; it does not bundle the server. Start the local stack above, then open the app:
+
+```sh
+npm run dev --workspace @fanoos/desktop
+```
+
+On first launch, enter your server URL. Use HTTPS for remote servers; localhost HTTP is supported for development. The online app loads the server's web UI, so web changes appear after a refresh. Changes to the native shell or bundled offline UI require rebuilding the desktop app.
+
+Downloads is available online and offline. It saves individual YouTube videos, selected audio/captions, artwork and playback metadata on the device. When the server is unavailable, the bundled shell opens the local library and searches downloaded content. Downloads belong to the current server and Fanoos profile; progress and history merge after reconnecting. Crunchyroll and Plex downloads are not implemented.
+
+Local packaging, production Widevine/EVS setup and validation commands are documented in [apps/desktop/README.md](apps/desktop/README.md). Production Crunchyroll streaming on macOS and Windows requires EVS signing in addition to OS signing. The GitHub release workflow currently publishes container images; it does not publish desktop installers or configure automatic desktop updates.
+
+## Browsing and playback
+
+- **Channels:** followed YouTube channels. **Shows:** Crunchyroll watchlists and Plex TV libraries. **Movies:** Plex movie libraries, including libraries shared with your account.
+- The three catalogs share service/library filters, a title filter, Sync now and Export actions. Plex filters identify the library and server together. Each page requests three rows at the current grid width, with Previous/Next controls beside the floating section heading.
+- Sidebar lists show individual channels, shows and movies, capped at 100 recent items. Exports include the full catalog, not just the visible page: YouTube subscriptions use OPML or NewPipe JSON; shows and movies use JSON.
+- Plex **Original** quality preserves the source. Alternate original audio uses a remux that copies video and audio unchanged; if Plex cannot copy both streams, choose **Transcode** explicitly. Unsupported browser audio shows a warning and is never converted automatically.
+- Embedded text subtitles use Plex's subtitle-only endpoint and Fanoos's existing subtitle renderer. Image subtitles use the explicit Plex burn-in path.
 
 ## Docker
 
-Each release publishes three images for `linux/amd64` and `linux/arm64`: `ghcr.io/hcx-labs/fanoos-core` (which also serves the web app), `fanoos-youtube` and `fanoos-crunchyroll`. To run everything, with the streaming companion and Redis:
+The release workflow builds four application images for `linux/amd64` and `linux/arm64`: `ghcr.io/hcx-labs/fanoos-core` (which also serves the web app), `fanoos-youtube`, `fanoos-crunchyroll` and `fanoos-plex`, plus `fanoos-companion-signed-in` for optional signed-in YouTube playback. To run the application services with the streaming companion and Redis:
 
 ```sh
 cp compose.env.example .env   # fill in BACKEND_TOKEN, COMPANION_SECRET, Google OAuth…
@@ -73,26 +98,27 @@ docker compose up -d
 
 To use a different DNS setup per backend (say, Crunchyroll through another Control D profile), add a second ctrld instance with its own config and address and point only that backend at it; `compose.ctrld.yaml` shows how. HTTP proxies work too: `COMPANION_PROXY` for the companions, `YOUTUBE_PROXY` for the backend's own requests. See Invidious' [notes on blocked IPs](https://docs.invidious.io/youtube-errors-explained/) for more.
 
-Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data` and `crunchyroll-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then sign in with the google.com/device code shown in Settings → Signed-in playback. The sign-in is kept across restarts in the `companion-signed-in-session` volume.
+Then open `PUBLIC_URL` (default http://localhost:8787). Only core is published on a port; everything else stays on the internal network. Data lives in the `core-data`, `youtube-data`, `crunchyroll-data` and `plex-data` volumes. Signed-in playback for age-restricted videos (optional, owner only) runs as its own container: `docker compose --profile age-restricted up -d companion-signed-in`, then sign in with the google.com/device code shown in Settings → Signed-in playback. The sign-in is kept across restarts in the `companion-signed-in-session` volume.
 
 ### Releases
 
-Actions → **Release** → Run workflow, and pick **patch**, **minor** or **major**. The workflow bumps the version in every package, commits and tags it, builds and pushes the three images, and publishes a GitHub release listing them.
+Actions → **Release** → Run workflow, and pick **patch**, **minor** or **major**. The workflow bumps the version in every package, commits and tags it, builds and pushes the application and signed-in companion images, and publishes a GitHub release listing them. Desktop installers are built separately.
 
 ## Layout
 
 npm workspaces:
 
+- `apps/desktop`: the Electron client, native download queue, local media serving and EVS packaging hooks; see its [README](apps/desktop/README.md).
 - `apps/web`: the React app (Vite, Tailwind v4, shadcn kit components in `src/components/ui/`).
 - `apps/server`: **Fanoos core** (Hono on Node 24+, runs TypeScript directly; SQLite via `node:sqlite`). Accounts and sessions, the linked-account registry, app data, merging across backends, and a proxy to backends' public routes (`/api/b/<slug>/public/…`).
-- `services/youtube`, `services/crunchyroll`: **backends**, one process each, each with its own database for credentials.
+- `services/youtube`, `services/crunchyroll`, `services/plex`: **backends**, one process each, each with its own database for credentials.
 - `services/kit`: what every backend is built on (the protocol server, shared Redis cache, signing). Imported by relative path, since Node won't run TypeScript from `node_modules`.
 - `packages/shared`: types shared by everything, including the provider protocol. Types only.
 - `vendor/invidious-companion`: pinned submodule, YouTube streaming.
 
 ### The provider protocol
 
-JSON over HTTP under `/v1`, authenticated with `BACKEND_TOKEN`: `info` (name, features, how linking works, link hosts), linking (redirect or device-code flows, polled by core), `following`, `feed`, `continue`, `search`, `videos`, `channels` (with sections, for seasons), `resolve` (pasted links), and actions (`follow`, `rating`, `comments`, `progress`). Browser-facing URLs (images, manifests, licences) are `/public/…` paths that core rewrites and proxies. A backend lists only the features it supports, and the app shows only those. See [`protocol.ts`](packages/shared/src/protocol.ts); adding a service means writing a backend, not changing core or the app.
+JSON over HTTP under `/v1`, authenticated with `BACKEND_TOKEN`: `info` (name, features, how linking works, link hosts), linking (redirect or device-code flows, polled by core), `following`, `feed`, `continue`, `search`, `videos`, `channels` (with sections, for seasons), `resolve` (pasted links), and actions (`follow`, `rating`, `comments`, `progress`). Browser-facing URLs (images, manifests, licences) are `/public/…` paths that core rewrites and proxies. A backend lists only the features it supports, and the app shows only those. See [`protocol.ts`](packages/shared/src/protocol.ts); new providers implement this protocol and declare their capabilities so core can route requests and the web app can expose supported controls.
 
 ## YouTube backend
 
@@ -121,6 +147,73 @@ Optional, and needs a **Crunchyroll Premium** account.
 - **Not private:** browsing and playback happen as your account, so Crunchyroll sees what you watch there and keeps it in your history (Fanoos also reports your position, so its Continue Watching stays in sync). YouTube stays signed out regardless.
 - **Playback:** Widevine DRM, end to end. The backend asks Crunchyroll for a playback session, proxies the manifest and segments, and forwards the browser's licence requests with your session attached. Decryption happens only in the browser's own CDM; Fanoos never sees or extracts keys. Works in Chrome, Edge and Firefox; Safari needs FairPlay, which isn't offered. Sessions count toward your plan's stream limit, are kept alive while playing, and are released when you leave.
 - **Extras:** styled `.ass` subtitles (rendered with JASSUB), every dub as a seamless audio switch, intro and credits skipping, shows with seasons, and your watchlist as follows in the feed.
+
+## Plex
+
+Plex runs as its own provider service at `http://127.0.0.1:8790`. Add
+`plex=http://127.0.0.1:8790` to core's `BACKENDS`, copy `services/plex/.env.example`
+to `.env`, and use the same `BACKEND_TOKEN` as core. `npm run dev` starts it alongside
+the other backends; `npm run dev --workspace @fanoos/plex` starts it separately.
+No Plex developer secret is required.
+
+In Settings → Accounts → Connect account, choose Plex and sign in on Plex's page.
+The service discovers owned and shared Plex Media Servers, chooses a reachable
+advertised connection, and uses each server's own access token. Account tokens are
+encrypted in the backend database and never sent to the web app. Set
+`PLEX_OWNED_ONLY=1` to omit shared servers. Unlinking removes the backend's stored
+credentials; the authorization can also be revoked in Plex's Authorized Devices.
+
+- Libraries appear under Following. TV libraries open into poster grids of shows,
+  seasons, and episodes. Movie libraries appear in the dedicated Movies section.
+- Selecting Plex on Home reveals the same compact filter pills as YouTube, populated
+  from accessible server libraries. Recent additions populate Home; Plex resume positions populate Continue watching.
+  Search covers accessible servers, movies, shows and episodes.
+- Channels, Shows and Movies have their own navigation entries. The sidebar shows
+  sources relevant to the current section; Sources retains account/group management.
+- Original quality reads the original media file without transcoding. Browser codec
+  and container support still apply. Common H.264/AAC MP4 files default to original.
+- Quality transcodes request H.264 DASH at the selected resolution and bitrate.
+  Audio stays original until Audio → Transcode is chosen; that option requests AAC
+  stereo and lets Plex decide whether video conversion is needed. These use the
+  Plex server's transcoder; playback requirements and
+  server permissions still apply. Quality changes retain the playback position.
+- Signed media URLs proxy artwork, file byte ranges, DASH manifests/segments, and
+  text subtitles through Fanoos. Plex credentials and private server URLs stay on
+  the backend. Intro/credit markers and chapters use the existing player controls.
+- Alternate original audio tracks use a Plex remux with both video and audio
+  copied unchanged. The media decision is checked before playback; conversion
+  requires the separate Transcode choice. The file-default track remains direct play.
+- Plex Home managed-user switching, music, live TV and Plex's free streaming catalog
+  are outside this integration. Image-based subtitles use Plex burn-in.
+- Plex feed curation, date groups and newest-first browsing use release dates,
+  never library added dates. Missing release dates remain unknown.
+- Plex library listings, metadata and browse pages use the shared Redis-backed
+  cache (two minutes, five minutes and one minute respectively), scoped by server
+  and account credentials. Playback details and continue-watching bypass it; signed
+  playback URLs and sessions are generated fresh. Artwork uses the same shared
+  Redis cache for one day, with stable daily URLs and a one-day browser cache.
+  Sync now refreshes library discovery and the visible browse page.
+- Embedded text subtitles use Plex's native subtitle-only endpoint after media
+  decision negotiation. Plex returns ASS for Fanoos's existing renderer; external
+  subtitles use Plex's stream endpoint. No media-file scan or backend FFmpeg is
+  involved. Embedded tracks are selected temporarily while the subtitle-only
+  session runs, then the previous subtitle preference is restored. These requests
+  share the playback selection lock and never change audio/video quality. Subtitle text uses the shared Redis cache for seven days. Image
+  subtitles retain the explicit Plex burn-in option.
+
+The backend must be able to reach each Plex server from its own network (including
+from inside Docker). HTTPS certificates remain verified. Direct-play media must be
+supported by the viewer's browser; use a Transcode option otherwise.
+
+Validation: `npm run test --workspace @fanoos/plex`, `npm run typecheck`, and
+`npm run build`. The web interaction check is
+`scripts/performance/plex-library.mjs`; `scripts/performance/catalog-layout.mjs`
+checks responsive three-row pagination, sticky section pills and loading/error states.
+`scripts/performance/feed-release-date.mjs` checks release-based feed curation.
+Both use the existing isolated headless-Chrome
+CDP harness. Plex's authentication reference is at
+https://forums.plex.tv/t/authenticating-with-plex/609370 and the PMS API reference
+is at https://developer.plex.tv/pms/.
 
 ## Fanoos core
 

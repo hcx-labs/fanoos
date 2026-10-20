@@ -1,10 +1,10 @@
 import { DownloadedChannels } from "@/components/shell/downloaded-channels";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router";
 import { ChevronDown, Settings } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
-import { nav } from "@/components/shell/top-bar";
+import { useNavigation } from "@/components/shell/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useData } from "@/hooks/use-data";
 import { brand } from "@/lib/brand";
@@ -12,18 +12,43 @@ import { itemKey, paths } from "@/lib/paths";
 import { ServiceMark } from "@/components/service-mark";
 import { useSource } from "@/lib/source";
 import { useStore } from "@/lib/store";
+import type { Channel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Persistent left rail on wide screens: navigation and what the viewer follows (channels and shows). */
 export function ChannelRail() {
-  const downloaded = useLocation().pathname.startsWith("/downloads");
+  const nav = useNavigation();
+  const location = useLocation();
+  const downloaded = location.pathname.startsWith("/downloads");
+  const context = location.pathname.startsWith("/channel/") && ["movies", "shows", "channels"].includes(location.state?.catalog) ? location.state.catalog as "movies" | "shows" | "channels" : "all";
+  const section = location.pathname.startsWith("/movies") ? "movies" : location.pathname.startsWith("/shows") ? "shows" : location.pathname.startsWith("/channels") || location.pathname.startsWith("/channel/youtube/") ? "channels" : context;
+  const heading = section === "movies" ? "Movies" : section === "shows" ? "Shows" : section === "channels" ? "Followed channels" : "Your sources";
+  const browse = section === "all" ? "/following" : `/${section}`;
   const muted = useStore((s) => s.muted);
   const source = useSource();
-  const state = useData(() => source.following(), [source.key]);
+  const state = useData(() => source.following({ rail: true, kind: section === "all" ? undefined : section }), [source.key, section]);
+  const libraryTitles = useData(async () => {
+    if (section !== "shows" && section !== "movies") return [];
+    const libraries = (state.data ?? []).filter((c) => c.kind === "library" && c.libraryType === section);
+    const lists = await Promise.all(libraries.map(async (library) => {
+      const shows: Channel[] = []; let next: string | undefined;
+      do {
+        const page = await source.channel(library, undefined, { next, sort: "new" });
+        shows.push(...(page.channels ?? page.videos.map((movie): Channel => ({ id: movie.id, backend: movie.backend, provider: movie.provider, kind: "movie", name: movie.title, avatar: movie.poster, poster: movie.poster, year: movie.year, unseen: 0, via: movie.via, lastActivity: movie.published ? Date.parse(movie.published) / 1000 : undefined })))); next = page.next;
+      } while (next && shows.length < 100);
+      return shows.slice(0, 100);
+    }));
+    return lists.flat();
+  }, [source.key, state.data, section]);
   const [more, setMore] = useState(false);
-  const sorted = (state.data ?? [])
+  useEffect(() => setMore(false), [section]);
+  const loading = state.status === "loading" || ((section === "movies" || section === "shows") && libraryTitles.status === "loading");
+  const filtered = [...(state.data ?? []), ...(libraryTitles.data ?? [])]
+    .filter((c) => section === "movies" ? c.kind === "movie" : section === "shows" ? c.kind === "series" : section === "channels" ? !c.kind || c.kind === "channel" : true)
     .filter((c) => !muted.includes(itemKey({ backend: c.backend, id: c.id })))
-    .sort((a, b) => Number(!!b.live) - Number(!!a.live) || b.unseen - a.unseen);
+    .sort((a, b) => Number(!!b.live) - Number(!!a.live) || (b.lastActivity ?? 0) - (a.lastActivity ?? 0) || b.unseen - a.unseen);
+  const groups = section === "all" ? [filtered.filter((c) => c.kind === "library"), filtered.filter((c) => c.kind === "series"), filtered.filter((c) => !c.kind || c.kind === "channel")] : [filtered];
+  const sorted = Array.from({ length: Math.max(0, ...groups.map((group) => group.length)) }, (_, index) => groups.flatMap((group) => group[index] ? [group[index]!] : [])).flat().filter((c, index, all) => all.findIndex((other) => itemKey(other) === itemKey(c)) === index).slice(0, 100);
   const shown = more ? sorted : sorted.slice(0, 8);
 
   return (
@@ -50,13 +75,13 @@ export function ChannelRail() {
       </nav>
 
       {downloaded ? <DownloadedChannels /> : <>
-      <div className="mt-8 mb-2 flex items-center justify-between px-3">
-        <h2 className="text-sm font-semibold">Following</h2>
-        <Link to="/following" className="text-muted-foreground hover:text-foreground text-xs">
-          Manage
+      <div className="mt-8 mb-2 flex items-baseline justify-between px-3">
+        <h2 className="text-sm font-semibold">{heading}</h2>
+        <Link to={browse} className="text-muted-foreground hover:text-foreground text-xs">
+          Browse
         </Link>
       </div>
-      {state.status === "loading" && (
+      {loading && (
         <div className="space-y-3 px-3 pt-1">
           {Array.from({ length: 6 }, (_, i) => (
             <div key={i} className="flex items-center gap-3">
@@ -66,6 +91,7 @@ export function ChannelRail() {
           ))}
         </div>
       )}
+      {libraryTitles.status === "error" && <p role="alert" className="text-muted-foreground px-3 text-xs">Couldn’t load saved titles. Open the catalog to try again.</p>}
       <ul
         className={cn(
           "no-scrollbar min-h-0 space-y-0.5 overflow-y-auto overscroll-contain",
@@ -75,12 +101,13 @@ export function ChannelRail() {
         {shown.map((channel) => (
           <li key={`${channel.backend}:${channel.id}`}>
             <NavLink
-              to={paths.channel(channel)}
+              state={{ catalog: channel.kind === "movie" ? "movies" : channel.kind === "series" ? "shows" : section }}
+              to={channel.kind === "library" ? `/${channel.libraryType === "movies" ? "movies" : "shows"}?library=${encodeURIComponent(itemKey(channel))}` : paths.channel(channel)}
               className={({ isActive }) =>
-                cn("hover:bg-muted flex items-center gap-3 rounded-xl px-3 py-2", isActive && "bg-secondary")
+                cn("hover:bg-muted flex items-center gap-3 rounded-xl px-3 py-2", (channel.kind === "library" ? location.pathname === `/${channel.libraryType === "movies" ? "movies" : "shows"}` && new URLSearchParams(location.search).get("library") === itemKey(channel) : isActive) && "bg-secondary")
               }
             >
-              {channel.kind === "series" ? (
+              {(channel.kind === "series" || channel.kind === "movie") ? (
                 <span className="bg-muted grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md">
                   {channel.avatar && <img src={channel.avatar} alt="" loading="lazy" className="size-full object-cover" />}
                 </span>
@@ -91,7 +118,7 @@ export function ChannelRail() {
                 <span className="block truncate text-sm font-medium">{channel.name}</span>
                 <span className="text-muted-foreground flex items-center gap-1.5 truncate text-xs">
                   <ServiceMark backend={channel.backend} />
-                  {channel.group}
+                  {channel.kind === "library" ? channel.handle : channel.group}
                   <ViaDots via={channel.via} />
                 </span>
               </span>
