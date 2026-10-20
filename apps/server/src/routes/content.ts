@@ -4,7 +4,7 @@
  * the backend named in the URL (/api/v/<slug>/…). No provider-specific code lives here.
  */
 import { Hono } from "hono";
-import type { BackendFeature, Channel, ChannelAbout, ChannelPage, Comment, CommentPage, Playlist, ResolvedLink, SearchResults, Video, VideoDetail } from "@tube/shared";
+import type { DownloadPlan, BackendFeature, Channel, ChannelAbout, ChannelPage, Comment, CommentPage, Playlist, ResolvedLink, SearchResults, Video, VideoDetail } from "@tube/shared";
 import { accountById, accountsFor, BackendError, bySlug, call, type CoreAccount, infoOf, noteRelink, relay, serviceBySlug, services, viaToIds } from "../backends.ts";
 import { db } from "../db.ts";
 import { type AppEnv, fail, requireUser } from "../http.ts";
@@ -164,6 +164,13 @@ const safeId = (raw: string | undefined) => {
 
 /** The viewer's accounts on this backend (for following filters and acting as the account). */
 const mine = (userId: string, slug: string) => accountsFor(userId, { slug });
+
+item.get("/videos/:id/download", async (c) => {
+  const slug = slugOf(c.req.param("slug"));
+  if (slug !== "youtube") throw fail(400, "Offline downloads are currently available for YouTube only.");
+  const plan = await call<DownloadPlan>(slug, `/videos/${safeId(c.req.param("id"))}/download`, { accounts: refsOf(mine(c.get("user").id, slug)) }).catch(relay);
+  return c.json(plan);
+});
 
 item.get("/videos/:id", async (c) => {
   const slug = slugOf(c.req.param("slug"));

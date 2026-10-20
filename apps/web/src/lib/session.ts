@@ -20,8 +20,10 @@ const emit = (next: Session) => {
 let dataFor: string | null = null;
 
 export async function refreshSession() {
+  if (window.fanoosDesktop?.offline) return;
   try {
     const me = await api<Me>("/auth/me");
+    await window.fanoosDesktop?.downloads?.connect().catch(() => {});
     // Load the account's app data before showing the app, once per account.
     if (dataFor !== me.profile.id) {
       await loadAppData();
@@ -187,6 +189,7 @@ export const authActions = {
     await refreshSession();
   },
   async signOut() {
+    await window.fanoosDesktop?.downloads?.disconnect();
     await api("/auth/logout", { body: {} }).catch(() => {});
     clearAppData();
     dataFor = null;

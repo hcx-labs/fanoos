@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'"><title>Connect to Fanoos</title>
+<style>
+:root { color-scheme: dark light; font: 16px system-ui; } body { margin: 0; min-height: 100vh; display: grid; place-items: center; } main { width: min(420px, 80vw); } label,input,button { display: block; } input,button { box-sizing: border-box; width: 100%; padding: 12px; margin-top: 12px; font: inherit; border-radius: 8px; } p { line-height: 1.5; } #error { color: #e96b6b; } .drag { position: fixed; top: 0; height: 64px; width: 100%; -webkit-app-region: drag; }
+</style></head><body><div class="drag"></div><main><h1>Fanoos</h1><p>Connect to your Fanoos server. Your account and media stay on your server.</p><form><label for="server">Server URL</label><input id="server" type="url" placeholder="https://fanoos.example.com" required autofocus><button>Connect</button><p id="error" role="alert"></p></form></main><script src="setup.js"></script></body></html>

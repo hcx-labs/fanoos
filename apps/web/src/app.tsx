@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { Layout } from "@/components/shell/layout";
 import { PlayerBoundary } from "@/components/player/player-boundary";
 import { ChannelPage } from "@/pages/channel";
+import { DownloadsPage } from "@/pages/downloads";
 import { HomePage } from "@/pages/home";
 import { LibraryPage } from "@/pages/library";
 import { SearchPage } from "@/pages/search";
@@ -14,6 +15,7 @@ import { WelcomePage } from "@/pages/welcome";
 import { useSession } from "@/lib/session";
 
 // DASH and subtitle decoders are only needed when opening a watch page.
+const DownloadedWatchPage = lazy(() => import("@/pages/downloaded-watch").then((module) => ({ default: module.DownloadedWatchPage })));
 const WatchPage = lazy(() => import("@/pages/watch").then((module) => ({ default: module.WatchPage })));
 
 /** The app needs a signed-in profile; linked accounts are optional (the feed explains how to add one). */
@@ -64,6 +66,8 @@ export function App() {
         <Route path="/channel/:id" element={<Legacy to="channel" />} />
         <Route path="/following" element={<SubscriptionsPage />} />
         <Route path="/subscriptions" element={<Navigate to="/following" replace />} />
+        <Route path="/downloads/:id" element={<Suspense fallback={<div className="page" role="status">Loading download…</div>}><DownloadedWatchPage /></Suspense>} />
+        <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />

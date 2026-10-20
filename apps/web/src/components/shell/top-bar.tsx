@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router";
 import {
+  Download,
   CalendarDays,
   ChartColumn,
   Check,
@@ -54,6 +55,7 @@ export const nav = [
   { to: "/following", label: "Following", icon: UsersRound },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/library", label: "Library", icon: LibraryBig },
+  ...(window.fanoosDesktop?.downloads ? [{ to: "/downloads", label: "Downloads", icon: Download }] : []),
   { to: "/analytics", label: "Analytics", icon: ChartColumn },
 ];
 
@@ -78,12 +80,12 @@ export function useSearchShortcut() {
   return [open, setOpen] as const;
 }
 
-export function TopBar({ onSearch }: { onSearch: () => void }) {
+export function TopBar({ onSearch, actions }: { onSearch: () => void; actions?: ReactNode }) {
   const scrolled = useScrolled();
   return (
     <header data-scrolled={scrolled || undefined} className="top-bar sticky top-0 z-40">
       {/* Three columns from md up: equal-width sides keep the search box at the true centre of the window. */}
-      <div className="flex h-16 items-center gap-3 px-4 sm:px-6 md:grid md:grid-cols-[1fr_minmax(0,28rem)_1fr] lg:px-6">
+      <div className="window-top-bar flex h-16 items-center gap-3 px-4 sm:px-6 md:grid md:grid-cols-[1fr_minmax(0,28rem)_1fr] lg:px-6">
         <div className="flex min-w-0 items-center">
         <Link to="/" className="flex shrink-0 items-center rounded-lg" aria-label={`${brand.name} home`}>
           <Logo />
@@ -119,8 +121,7 @@ export function TopBar({ onSearch }: { onSearch: () => void }) {
         </button>
 
         <div className="flex shrink-0 items-center gap-1 md:justify-self-end">
-          <PrivacyStatus />
-          <AccountMenu />
+          {actions ?? <><PrivacyStatus /><AccountMenu /></>}
         </div>
       </div>
     </header>

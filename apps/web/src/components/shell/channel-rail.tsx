@@ -26,7 +26,7 @@ export function ChannelRail() {
 
   return (
     // Nav and footer stay put; only the channel list scrolls, within the space left over.
-    <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 flex-col px-3 pt-2 pb-4 lg:flex">
+    <aside className="channel-rail sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 flex-col px-3 pt-2 pb-4 lg:flex">
       <nav aria-label="Primary" className="space-y-0.5">
         {[...nav, { to: "/settings", label: "Settings", icon: Settings, end: false }].map(({ to, label, icon: Icon, end }) => (
           <NavLink

@@ -34,7 +34,7 @@ export function Layout() {
         <TopBar onSearch={() => setSearchOpen(true)} />
         <div className="flex">
           <ChannelRail />
-          <main key={page.current} className="min-w-0 flex-1">
+          <main key={page.current} className="page-transition min-w-0 flex-1">
             <Outlet />
           </main>
         </div>
