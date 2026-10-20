@@ -23,7 +23,6 @@ export function DownloadedWatchPage() {
   return <div className="page max-w-6xl">
     <Link className="text-muted-foreground mb-5 inline-flex items-center gap-2 text-sm hover:text-foreground" to="/downloads"><ArrowLeft className="size-4" />Downloads</Link>
     <PlayerBoundary><Player ref={player} video={detail.video} stream={detail.stream} theater={theater} onTheaterChange={setTheater} /></PlayerBoundary>
-    <p className="text-muted-foreground mt-4 text-xs">Available offline · {detail.quality} · Downloaded {new Date(detail.downloadedAt).toLocaleDateString()}</p>
     <VideoInfo video={detail.video} channel={detail.channel} onSeek={(time) => player.current?.seek(time)} offline />
   </div>;
 }
