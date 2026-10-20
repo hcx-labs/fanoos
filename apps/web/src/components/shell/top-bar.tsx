@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router";
 import {
   CalendarDays,
@@ -46,6 +46,7 @@ import { brand } from "@/lib/brand";
 import { accountActions, authActions, backendName, useAccounts, useProfile } from "@/lib/session";
 import { useSettings } from "@/lib/store";
 import { useTheme, type Theme } from "@/lib/theme";
+import type { LinkedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const nav = [
@@ -191,20 +192,69 @@ const themes: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: "system", label: "System", icon: Laptop },
 ];
 
+/** Whether the last interaction was a pointer (true) or the keyboard (false). */
+function usePointerInput() {
+  const pointer = useRef(false);
+  useEffect(() => {
+    const onPointer = () => (pointer.current = true);
+    const onKey = () => (pointer.current = false);
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
+  return pointer;
+}
+
+const STACK_MAX = 4;
+
+/**
+ * The accounts streaming into the feed, tucked behind the profile avatar; they fan out
+ * when the trigger is hovered, focused or open. Later siblings paint on top, so the
+ * profile (rendered after) covers the stack and each account covers the one before it.
+ */
+function AccountStack({ accounts }: { accounts: LinkedAccount[] }) {
+  if (!accounts.length) return null;
+  const shown = accounts.slice(0, STACK_MAX);
+  const extra = accounts.length - shown.length;
+  const item =
+    "ring-background -mr-4 size-6 shrink-0 ring-2 transition-[margin] duration-200 ease-out motion-reduce:transition-none group-hover:mr-1 group-data-[state=open]:mr-1";
+  return (
+    <span className="flex items-center pl-1" aria-hidden>
+      {extra > 0 && (
+        <span className={cn(item, "bg-secondary text-muted-foreground grid place-items-center rounded-full text-[9px] font-semibold")}>+{extra}</span>
+      )}
+      {shown.toReversed().map((account) => (
+        <AccountAvatar key={account.id} account={account} className={item} textClassName="text-[9px]" />
+      ))}
+    </span>
+  );
+}
+
 function AccountMenu() {
   const profile = useProfile();
   const { backends, accounts, active, inFeed } = useAccounts();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
+  const pointerClose = usePointerInput();
   if (!profile) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-lg" className="rounded-full" aria-label={`${brand.name} account`}>
-          <ChannelAvatar name={profile.name} className="size-8" textClassName="text-xs" />
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          className="group w-auto min-w-9 rounded-full px-0.5"
+          aria-label={`${brand.name} account${inFeed.length ? `, streaming from ${inFeed.map((a) => a.label).join(", ")}` : ""}`}
+        >
+          <AccountStack accounts={inFeed} />
+          <ChannelAvatar name={profile.name} className="ring-background relative size-8 ring-2" textClassName="text-xs" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
+      {/* Focus returns to the trigger only for keyboard users; after a click it would leave the ring on. */}
+      <DropdownMenuContent align="end" className="w-72" onCloseAutoFocus={(e) => pointerClose.current && e.preventDefault()}>
         <DropdownMenuLabel className="flex items-center gap-3 py-2">
           <ChannelAvatar name={profile.name} className="size-9" textClassName="text-xs" />
           <span className="min-w-0">
