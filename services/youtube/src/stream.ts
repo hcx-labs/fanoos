@@ -48,7 +48,15 @@ const isAgeGate = (s: Status) => s.status === "LOGIN_REQUIRED" && /age|inappropr
 /** "Sign in to confirm you're not a bot": YouTube distrusts this server's address. */
 const isBotCheck = (s: Status) => /not a bot|confirm you/i.test(s.reason ?? "");
 
-const playabilityCache = new SharedCache<Playability>("playability", { staleSeconds: 3600 });
+/**
+ * Only settled answers are cached: the anonymous instance streams it, or it can't be played.
+ * The rest (age gate, bot check, warming up, the signed-in fallback) can change within a
+ * minute, e.g. right after age-restricted playback is set up, so they're asked again each time.
+ */
+const playabilityCache = new SharedCache<Playability>("playability", {
+  staleSeconds: 3600,
+  keep: (p) => (p.ok ? p.instance === "a" : p.code === "unplayable"),
+});
 
 /** Whether the video can be streamed (and by which instance), or why not. */
 export function playability(id: string): Promise<Playability> {
@@ -60,8 +68,6 @@ export function playability(id: string): Promise<Playability> {
     if (isAgeGate(anon)) {
       const signed = signedInReady() ? await playerStatus("s", id) : null;
       if (signed?.status === "OK") return { ok: true, instance: "s" };
-      // Not cached: once age-restricted playback is set up, the next attempt should use it.
-      queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "age_restricted", reason: anon.reason ?? "Age-restricted." };
     }
     // No anti-bot token yet (warming up, or YouTube keeps refusing this address) and the bot check
@@ -70,20 +76,15 @@ export function playability(id: string): Promise<Playability> {
     if ((isBotCheck(anon) || noToken) && getSettings().botCheckFallback && signedInReady()) {
       const signed = await playerStatus("s", id);
       if (signed?.status === "OK") {
-        // A short-lived answer: the anonymous instance may have its token in a minute.
-        queueMicrotask(() => void playabilityCache.delete(id));
         return { ok: true, instance: "s" };
       }
     }
     if (isBotCheck(anon)) {
-      // Not cached: the address may be trusted again soon, or the fallback switched on.
-      queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "bot_check", reason: "YouTube asked this server to sign in to confirm it isn't a bot." };
     }
     // Reported while the companion generates its first anti-bot token (after a restart). It
-    // passes on its own, so say so plainly, don't cache it, and let the app retry.
+    // passes on its own, so say so plainly and let the app retry.
     if (noToken) {
-      queueMicrotask(() => void playabilityCache.delete(id));
       return { ok: false, code: "starting", reason: "The streaming service is starting up. This usually takes under a minute." };
     }
     return { ok: false, code: "unplayable", reason: anon.reason ?? "This video can't be played." };

@@ -160,11 +160,14 @@ export class SharedCache<T> {
   private ttl: number;
   private stale: number;
   private inflight = new Map<string, Promise<T>>();
+  private keep: (value: T) => boolean;
 
-  constructor(namespace: string, opts: { ttlSeconds?: number; staleSeconds?: number } = {}) {
+  /** `keep` decides which loaded values are stored; the rest are returned but loaded again next time. */
+  constructor(namespace: string, opts: { ttlSeconds?: number; staleSeconds?: number; keep?: (value: T) => boolean } = {}) {
     this.namespace = namespace;
     this.ttl = opts.ttlSeconds ?? defaults.ttlSeconds;
     this.stale = opts.staleSeconds ?? defaults.staleSeconds;
+    this.keep = opts.keep ?? (() => true);
   }
 
   private key(key: string) {
@@ -189,7 +192,9 @@ export class SharedCache<T> {
     if (running) return running;
     const loading = loader()
       .then(async (value) => {
-        if (value !== undefined) await this.write([[key, value]]);
+        if (value !== undefined && this.keep(value)) await this.write([[key, value]]);
+        // A stale stored copy mustn't outlive an answer that isn't kept.
+        else if (value !== undefined) await this.delete(key);
         return value;
       })
       .finally(() => this.inflight.delete(key));
