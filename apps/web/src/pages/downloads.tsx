@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router";
 import { Search, Download, Play, Pause, RotateCcw, Trash2, HardDrive, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "@/components/ui/empty";
 import { useTitle } from "@/hooks/use-title";
@@ -63,7 +64,7 @@ export function DownloadsPage() {
   const groups = downloadGroups(searchDownloads(library?.items.filter((i) => i.status === "complete") ?? [], query)).filter((g) => !group || g.key === group);
   const pending = searchDownloads(library?.items.filter((i) => i.status !== "complete") ?? [], query);
   const bridge = downloadBridge();
-  if (!bridge) return <div className="page"><h1 className="font-display text-3xl font-semibold">Downloads</h1><p className="text-muted-foreground mt-3">Offline downloads are available in the Fanoos desktop app.</p></div>;
+  if (!bridge) return <div className="page"><PageHeader title="Downloads" description="Offline downloads are available in the Fanoos desktop app." /></div>;
   const setLimit = async (value: string) => {
     setSaving(true);
     try { await bridge.limit(Number(value) * 1024 ** 3); await reload(); }
@@ -71,10 +72,12 @@ export function DownloadsPage() {
     finally { setSaving(false); }
   };
   return <div className="page">
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div><h1 className="font-display text-3xl font-semibold">Downloads</h1><p className="text-muted-foreground mt-2 text-sm">{library?.profileName ? `Saved on this device for ${library.profileName}.` : "Sign in to your server to start downloading YouTube videos."}</p></div>
-      {!window.fanoosDesktop?.offline && <Button variant="outline" onClick={() => void bridge.open()}><HardDrive className="size-4" />Open offline library</Button>}
-    </div>
+    <PageHeader
+      className="mb-6"
+      title="Downloads"
+      description={library?.profileName ? `Saved on this device for ${library.profileName}.` : "Sign in to your server to start downloading YouTube videos."}
+      actions={!window.fanoosDesktop?.offline && <Button variant="outline" className="rounded-full" onClick={() => void bridge.open()}><HardDrive className="size-4" />Open offline library</Button>}
+    />
     {error && <p role="alert" className="text-destructive mb-4 text-sm">{error}</p>}
     {library && <div className="bg-secondary/40 mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border p-4 text-xs">
       <span className="flex items-center gap-2"><HardDrive className="text-brand size-4" />{fileSize(library.usedBytes)} saved · {fileSize(library.freeBytes)} free on disk</span>
@@ -86,8 +89,8 @@ export function DownloadsPage() {
       <label className="bg-secondary/50 flex min-w-48 flex-1 items-center gap-2 rounded-full border px-4"><Search className="text-muted-foreground size-4" /><input className="h-10 min-w-0 flex-1 bg-transparent text-sm outline-none" aria-label="Search downloads" placeholder="Search your downloads" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
       <select aria-label="Filter downloads by channel or show" className="bg-background rounded-full border px-4 text-sm" value={group} onChange={(e) => setParams(e.target.value ? { group: e.target.value } : {})}><option value="">All channels & shows</option>{allGroups.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}</select>
     </div>}
-    {pending.length > 0 && <section className="mb-8 space-y-3"><h2 className="mb-4 text-sm font-semibold">Download queue <span className="text-muted-foreground ml-2">{pending.length}</span></h2>{pending.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} />)}</section>}
-    <div className="space-y-8">{groups.map((g) => <section key={g.key} aria-label={g.name}><h2 className="font-display mb-4 text-lg font-semibold">{g.name}<span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{g.items.length} saved</span></h2><div className="space-y-3">{g.items.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} />)}</div></section>)}</div>
+    {pending.length > 0 && <section className="mb-8 space-y-3"><h2 className="font-display mb-4 text-xl font-semibold">Download queue <span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{pending.length}</span></h2>{pending.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} />)}</section>}
+    <div className="space-y-8">{groups.map((g) => <section key={g.key} aria-label={g.name}><h2 className="font-display mb-4 text-xl font-semibold">{g.name}<span className="text-muted-foreground ml-2 font-sans text-xs font-normal">{g.items.length} saved</span></h2><div className="space-y-3">{g.items.map((item) => <DownloadRow key={item.id} item={item} refresh={reload} />)}</div></section>)}</div>
     {!!library?.items.length && !groups.length && !pending.length && <p role="status" className="text-muted-foreground py-8 text-center text-sm">No downloads match your search.</p>}
     <p className="text-muted-foreground mt-6 text-xs">Downloads are currently available for YouTube. Crunchyroll offline playback is not supported.</p>
   </div>;

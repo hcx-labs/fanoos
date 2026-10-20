@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { CloudOff, Download, LoaderCircle, Moon, RefreshCw, Search, Settings, Sun, Tv, UsersRound } from "lucide-react";
 import { TopBar, nav, useSearchShortcut } from "@/components/shell/top-bar";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -70,5 +71,5 @@ export function OfflineShell() { return <Shell />; }
 export function OfflineDestination() {
   const { pathname } = useLocation();
   const name = [...nav, { to: "/settings", label: "Settings" }].find((item) => item.to === pathname)?.label ?? "This page";
-  return <div className="page"><h1 className="font-display text-3xl font-semibold">{name}</h1><Empty className="mt-12 py-16"><EmptyHeader><EmptyMedia variant="icon"><CloudOff /></EmptyMedia><EmptyTitle>Offline</EmptyTitle><EmptyDescription>This page needs your Fanoos server. Your downloaded videos, metadata, and playback controls are still available.</EmptyDescription></EmptyHeader><Button asChild variant="secondary"><Link to="/downloads"><Download className="size-4" />Browse downloads</Link></Button></Empty></div>;
+  return <div className="page"><PageHeader title={name} /><Empty className="mt-12 py-16"><EmptyHeader><EmptyMedia variant="icon"><CloudOff /></EmptyMedia><EmptyTitle>Offline</EmptyTitle><EmptyDescription>This page needs your Fanoos server. Your downloaded videos, metadata, and playback controls are still available.</EmptyDescription></EmptyHeader><Button asChild variant="secondary"><Link to="/downloads"><Download className="size-4" />Browse downloads</Link></Button></Empty></div>;
 }
