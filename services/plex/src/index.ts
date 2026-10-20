@@ -29,7 +29,7 @@ function merge<T extends { id: string; via?: string[] }>(items: T[]): T[] {
  return [...result.values()];
 }
 function offset(value?: string) { if (!value) return 0; if (!/^\d{1,7}$/.test(value)) throw fail(400, "Invalid library page."); return Number(value); }
-function pageQuery(start: number, extra: Record<string, string> = {}) { return new URLSearchParams({ "X-Plex-Container-Start": String(start), "X-Plex-Container-Size": "50", ...extra }); }
+function pageQuery(start: number, extra: Record<string, string> = {}, size = 50) { return new URLSearchParams({ "X-Plex-Container-Start": String(start), "X-Plex-Container-Size": String(size), ...extra }); }
 async function detail(ref: string, server: Server, key: string): Promise<VideoDetail> {
  const data = (await json(server, `/library/metadata/${key}?includeChapters=1&includeMarkers=1`, { fresh: true })).MediaContainer;
  const item = data.Metadata?.[0]; if (!item || !["movie", "episode"].includes(item.type)) throw fail(404, "This Plex item is not a movie or episode.", "not_found");
@@ -52,7 +52,9 @@ export function createPlexService() {
  v1.get("/accounts/:ref", (c) => c.json(accountView(c.req.param("ref"))));
  v1.delete("/accounts/:ref", (c) => { const ref = c.req.param("ref"); account(ref, true); db.prepare("DELETE FROM accounts WHERE ref = ?").run(ref); forgetServers(ref); return c.json({ ok: true }); });
  v1.get("/following", async (c) => {
-  const rows = await Promise.all((await targets(refs(c))).map(async ({ ref, server }) => ((await json(server, "/library/sections")).MediaContainer.Directory ?? []).filter((l) => ["movie", "show"].includes(l.type)).map((l) => libraryChannel(ref, server, l))));
+  const refresh = c.req.query("refresh") === "1";
+  if (refresh) refs(c).forEach(forgetServers);
+  const rows = await Promise.all((await targets(refs(c))).map(async ({ ref, server }) => ((await json(server, "/library/sections", { refresh })).MediaContainer.Directory ?? []).filter((l) => ["movie", "show"].includes(l.type)).map((l) => libraryChannel(ref, server, l))));
   return c.json(merge(rows.flat()));
  });
  v1.get("/feed", async (c) => {
@@ -60,9 +62,9 @@ export function createPlexService() {
   if (selectedLibrary && !parseId(selectedLibrary).library) throw fail(400, "Choose a Plex library.");
   const rows = await Promise.all((await targets(refs(c))).map(async ({ ref, server }) => {
    const libraries = ((await json(server, "/library/sections")).MediaContainer.Directory ?? []).filter((l) => ["movie", "show"].includes(l.type) && (!selectedLibrary || itemId(server.id, l.key, true) === selectedLibrary));
-   return (await Promise.all(libraries.map(async (library) => ((await json(server, `/library/sections/${library.key}/all?${pageQuery(0, { type: library.type === "movie" ? "1" : "4", sort: "addedAt:desc" })}`)).MediaContainer.Metadata ?? []).map((item) => video(ref, server, { ...item, librarySectionTitle: library.title }, library.key))))).flat();
+   return (await Promise.all(libraries.map(async (library) => ((await json(server, `/library/sections/${library.key}/all?${pageQuery(0, { type: library.type === "movie" ? "1" : "4", sort: "originallyAvailableAt:desc" })}`)).MediaContainer.Metadata ?? []).map((item) => video(ref, server, { ...item, librarySectionTitle: library.title }, library.key))))).flat();
   }));
-  return c.json(merge(rows.flat()).sort((a, b) => (b.addedAt ?? b.published).localeCompare(a.addedAt ?? a.published)).slice(0, 200));
+  return c.json(merge(rows.flat()).sort((a, b) => b.published.localeCompare(a.published)).slice(0, 200));
  });
  v1.get("/continue", async (c) => c.json(merge((await Promise.all((await targets(refs(c))).map(async ({ ref, server }) => ((await json(server, "/library/onDeck")).MediaContainer.Metadata ?? []).filter((v) => (v.viewOffset ?? 0) > 0).map((v) => video(ref, server, v))))).flat())));
  v1.get("/calendar", (c) => c.json([]));
@@ -78,12 +80,12 @@ export function createPlexService() {
   return c.json({ channels: type === "video" ? [] : merge(found.flatMap((r) => r.channels)), videos: type === "channel" ? [] : merge(found.flatMap((r) => r.videos)) });
  });
  v1.get("/channels/:id", async (c) => {
-  const id = parseId(c.req.param("id")); const { ref, server } = await target(refs(c), id.server); const start = offset(c.req.query("next")); const q = (c.req.query("q") || "").slice(0, 200);
+  const id = parseId(c.req.param("id")); const { ref, server } = await target(refs(c), id.server); const start = offset(c.req.query("next")); const size = Math.min(100, Math.max(1, Math.floor(Number(c.req.query("limit")) || 50))); const q = (c.req.query("q") || "").slice(0, 200);
   let page: ChannelPage;
   if (id.library) {
    const library = ((await json(server, "/library/sections")).MediaContainer.Directory ?? []).find((l) => l.key === id.key && ["movie", "show"].includes(l.type));
    if (!library) throw fail(404, "Plex library not found.", "not_found");
-   const data = (await json(server, `/library/sections/${id.key}/all?${pageQuery(start, { sort: "titleSort:asc", ...(q ? { title: q } : {}) })}`)).MediaContainer;
+   const data = (await json(server, `/library/sections/${id.key}/all?${pageQuery(start, { sort: c.req.query("sort") === "new" ? "originallyAvailableAt:desc" : "titleSort:asc", ...(q ? { title: q } : {}) }, size)}`, { refresh: c.req.query("refresh") === "1" })).MediaContainer;
    const items = data.Metadata ?? []; page = { channel: libraryChannel(ref, server, library), videos: library.type === "movie" ? items.filter((i) => i.type === "movie").map((i) => video(ref, server, { ...i, librarySectionTitle: library.title }, library.key)) : [], channels: library.type === "show" ? items.filter((i) => i.type === "show").map((i) => showChannel(ref, server, i)) : undefined, next: start + items.length < (data.totalSize ?? items.length) ? String(start + items.length) : undefined };
   } else {
    const show = (await json(server, `/library/metadata/${id.key}`)).MediaContainer.Metadata?.[0]; if (show?.type === "movie") return c.json({ channel: movieChannel(ref, server, show), videos: [video(ref, server, show)] });

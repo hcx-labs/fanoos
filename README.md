@@ -157,10 +157,14 @@ credentials; the authorization can also be revoked in Plex's Authorized Devices.
   the backend. Intro/credit markers and chapters use the existing player controls.
 - Plex Home managed-user switching, music, live TV and Plex's free streaming catalog
   are outside this integration. Image-based subtitles use Plex burn-in.
+- Plex feed curation, date groups and newest-first browsing use release dates,
+  never library added dates. Missing release dates remain unknown.
 - Plex library listings, metadata and browse pages use the shared Redis-backed
   cache (two minutes, five minutes and one minute respectively), scoped by server
   and account credentials. Playback details and continue-watching bypass it; signed
-  playback URLs and sessions are generated fresh.
+  playback URLs and sessions are generated fresh. Artwork uses the same shared
+  Redis cache for one day, with stable daily URLs and a one-day browser cache.
+  Sync now refreshes library discovery and the visible browse page.
 - Embedded text subtitles use Plex's native subtitle-only endpoint after media
   decision negotiation. Plex returns ASS for Fanoos's existing renderer; external
   subtitles use Plex's stream endpoint. No media-file scan or backend FFmpeg is
@@ -174,7 +178,10 @@ supported by the viewer's browser; use a Transcode option otherwise.
 
 Validation: `npm run test --workspace @fanoos/plex`, `npm run typecheck`, and
 `npm run build`. The web interaction check is
-`scripts/performance/plex-library.mjs`, using the existing isolated headless-Chrome
+`scripts/performance/plex-library.mjs`; `scripts/performance/catalog-layout.mjs`
+checks responsive three-row pagination, sticky section pills and loading/error states.
+`scripts/performance/feed-release-date.mjs` checks release-based feed curation.
+Both use the existing isolated headless-Chrome
 CDP harness. Plex's authentication reference is at
 https://forums.plex.tv/t/authenticating-with-plex/609370 and the PMS API reference
 is at https://developer.plex.tv/pms/.

@@ -47,11 +47,32 @@ const refsOf = (list: CoreAccount[]) => list.map((a) => a.ref);
 contentRoutes.get("/following", async (c) => {
   const user = c.get("user");
   const groups = groupsOf(user.id);
-  const { items, failed } = await each(accountsFor(user.id, { feed: true }), async (slug, list) =>
+  const { items, failed } = await each(accountsFor(user.id, { feed: true }).filter((a) => (!c.req.query("backend") || a.slug === c.req.query("backend")) && (c.req.query("kind") !== "movies" || has(a.slug, "movies")) && (c.req.query("kind") !== "shows" || infoOf(a.slug)?.kind !== "youtube") && (c.req.query("kind") !== "channels" || infoOf(a.slug)?.kind === "youtube")), async (slug, list) =>
     viaToIds(await call<Channel[]>(slug, "/following", { accounts: refsOf(list) }), list, slug).map((ch) => ({ ...ch, group: groups.get(`${slug}:${ch.id}`) })),
   );
   if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
-  return c.json(items.sort((a, b) => a.name.localeCompare(b.name)));
+  const sorted = items.sort((a, b) => a.name.localeCompare(b.name));
+  if (c.req.query("limit")) {
+    const start = Math.max(0, Number(c.req.query("next")) || 0);
+    const size = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 36));
+    const query = (c.req.query("q") || "").toLowerCase();
+    const group = c.req.query("group");
+    const filtered = sorted.filter((ch) => (c.req.query("kind") === "shows" ? ch.kind === "series" : !ch.kind || ch.kind === "channel") && ch.name.toLowerCase().includes(query) && (!group || group === "all" || ch.group === group));
+    return c.json({ channels: filtered.slice(start, start + size), next: start + size < filtered.length ? String(start + size) : undefined, total: filtered.length, groups: [...new Set(sorted.map((ch) => ch.group).filter(Boolean))].sort() });
+  }
+  if (c.req.query("catalog") === "1") {
+    const seen = new Set<string>();
+    return c.json(sorted.filter((ch) => {
+      if (ch.kind === "library") return true;
+      if (ch.kind !== "series" || seen.has(ch.backend!)) return false;
+      seen.add(ch.backend!); return true;
+    }));
+  }
+  if (c.req.query("rail") === "1") {
+    const recent = [...sorted].sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0) || b.unseen - a.unseen);
+    return c.json([...(recent.filter((ch) => ch.kind === "library").slice(0, 100)), ...recent.filter((ch) => ch.kind === "series").slice(0, 100), ...recent.filter((ch) => !ch.kind || ch.kind === "channel").slice(0, 100)]);
+  }
+  return c.json(sorted);
 });
 
 contentRoutes.get("/feed", async (c) => {
@@ -67,7 +88,7 @@ contentRoutes.get("/feed", async (c) => {
   );
   if (failed.length) c.header("x-fanoos-partial", failed.map((f) => f.backend).join(","));
   const videos = items.filter((v) => (!group || groups.get(`${v.backend}:${v.channelId}`) === group) && (!library || v.libraryId === library));
-  return c.json(videos.sort((a, b) => (b.addedAt ?? b.published).localeCompare(a.addedAt ?? a.published)));
+  return c.json(videos.sort((a, b) => b.published.localeCompare(a.published)));
 });
 
 /** What followed channels and shows released in [from, to), oldest first (the Calendar). */
@@ -206,7 +227,7 @@ item.get("/channels/:id", async (c) => {
   const slug = slugOf(c.req.param("slug"));
   const list = mine(c.get("user").id, slug);
   const id = safeId(c.req.param("id"));
-  const page = await call<ChannelPage>(slug, `/channels/${id}`, { accounts: refsOf(list), query: { section: c.req.query("section"), next: c.req.query("next"), q: c.req.query("q"), sort: c.req.query("sort") } }).catch(relay);
+  const page = await call<ChannelPage>(slug, `/channels/${id}`, { accounts: refsOf(list), query: { section: c.req.query("section"), next: c.req.query("next"), q: c.req.query("q"), sort: c.req.query("sort"), limit: c.req.query("limit"), refresh: c.req.query("refresh") } }).catch(relay);
   const group = groupsOf(c.get("user").id).get(`${slug}:${id}`);
   const [channel] = viaToIds([{ ...page.channel, group }], list, slug);
   return c.json({ ...page, channel: channel!, channels: page.channels ? viaToIds(page.channels, list, slug) : undefined, videos: viaToIds(page.videos, list, slug) } satisfies ChannelPage);

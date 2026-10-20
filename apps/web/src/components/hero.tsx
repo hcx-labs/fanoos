@@ -41,7 +41,7 @@ function teaser(description: string, max = 180) {
 
 const prefersReducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Rotating spotlight of the newest uploads from your channels. */
+/** Rotating spotlight of the latest titles across connected services. */
 export function Hero({ videos }: { videos: Video[] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -79,7 +79,7 @@ export function Hero({ videos }: { videos: Video[] }) {
     <section
       ref={section}
       aria-roledescription="carousel"
-      aria-label="Latest from your channels"
+      aria-label="Latest across your services"
       className="group/hero bg-card relative mt-8 overflow-hidden rounded-3xl border"
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
@@ -176,7 +176,7 @@ export function Hero({ videos }: { videos: Video[] }) {
         {/* Queue on wide screens, with a progress bar for the current slide. */}
         {count > 1 && (
           <ol className="hidden flex-col gap-1 border-l p-3 lg:flex">
-            <li className="text-muted-foreground px-2 pt-1 pb-2 text-xs font-medium">Latest from your channels</li>
+            <li className="text-muted-foreground px-2 pt-1 pb-2 text-xs font-medium">Latest across your services</li>
             {videos.map((v, i) => (
               <li key={v.id}>
                 <QueueItem

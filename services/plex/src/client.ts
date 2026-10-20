@@ -74,9 +74,10 @@ async function fetchJson(server: Server, path: string): Promise<PlexContainer> {
 const libraryCache = new SharedCache<PlexContainer>("libraries-v1", { ttlSeconds: 120, staleSeconds: 300 });
 const metadataCache = new SharedCache<PlexContainer>("metadata-v1", { ttlSeconds: 300, staleSeconds: 600 });
 const browseCache = new SharedCache<PlexContainer>("browse-v1", { ttlSeconds: 60, staleSeconds: 120 });
-export async function json(server: Server, path: string, options: { fresh?: boolean } = {}): Promise<PlexContainer> {
+export async function json(server: Server, path: string, options: { fresh?: boolean; refresh?: boolean } = {}): Promise<PlexContainer> {
  if (options.fresh || path.startsWith("/library/onDeck")) return fetchJson(server, path);
  const key = createHash("sha256").update(JSON.stringify([server.id, server.clientId, server.token, path])).digest("hex");
  const cache = path === "/library/sections" ? libraryCache : /^\/library\/metadata\/\d+(\?|$)/.test(path) ? metadataCache : browseCache;
+ if (options.refresh) { const value = await fetchJson(server, path); await cache.setMany([[key, value]]); return value; }
  return cache.get(key, () => fetchJson(server, path));
 }

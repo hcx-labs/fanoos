@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type { PlaybackSource, Stream } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
@@ -8,6 +8,8 @@ import { subtitleTracks, subtitleRoutes } from "./subtitles.ts";
 import { rewriteManifest } from "./manifest.ts";
 import type { PlexItem, Server } from "./types.ts";
 type Ticket = { ref: string; server: string; path?: string; session?: string; key?: string; height?: number; bitrate?: number; audio?: number; part?: number; subtitles?: number[]; subtitle?: number; copyVideo?: boolean; audioCodec?: string };
+import { SharedCache } from "../../kit/src/cache.ts";
+const artwork = new SharedCache<{ type: string; body: string }>("artwork", { ttlSeconds: 86400, staleSeconds: 86400 });
 const ttl = 8 * 3600;
 // Plex stores stream selection per account/part. Keep selection and session creation together.
 const selections = new Map<string, Promise<void>>();
@@ -79,9 +81,16 @@ mediaRoutes.get("/subtitle/:ticket", async (c) => {
 });
 mediaRoutes.get("/image/:ticket", async (c) => {
  const ticket = read(c.req.param("ticket")); if (!/^\/library\/(metadata|sections)\//.test(ticket.path || "")) throw fail(403, "Invalid image.");
- const res = await request(await serverFor(ticket.ref, ticket.server), ticket.path!);
- if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) throw fail(502, "Plex artwork is unavailable.");
- return new Response(res.body, { headers: { "content-type": res.headers.get("content-type")!, "cache-control": "private, max-age=3600" } });
+ const server = await serverFor(ticket.ref, ticket.server);
+ const key = createHash("sha256").update(JSON.stringify([ticket.ref, server.id, server.token, ticket.path])).digest("hex");
+ const image = await artwork.get(key, async () => {
+  const res = await request(server, ticket.path!);
+  if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) throw fail(502, "Plex artwork is unavailable.");
+  const body = Buffer.from(await res.arrayBuffer());
+  if (body.length > 16 * 1024 * 1024) throw fail(502, "Plex artwork is too large.");
+  return { type: res.headers.get("content-type")!, body: body.toString("base64") };
+ });
+ return new Response(Buffer.from(image.body, "base64"), { headers: { "content-type": image.type, "cache-control": "private, max-age=86400" } });
 });
 mediaRoutes.get("/play/:ticket/manifest.mpd", async (c) => {
  let token = c.req.param("ticket"); const ticket = read(token);

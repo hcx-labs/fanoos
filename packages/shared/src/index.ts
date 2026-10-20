@@ -106,6 +106,8 @@ export type Channel = Via & {
   /** "series" for shows with seasons and episodes. Defaults to "channel". */
   kind?: "channel" | "series" | "movie" | "library";
   libraryType?: "movies" | "shows";
+  /** Most recent catalog activity, as a Unix timestamp in seconds. */
+  lastActivity?: number;
   year?: number;
   /** Portrait key art (shows). */
   poster?: string;
@@ -168,7 +170,6 @@ export type Video = Via & {
   viewsApprox?: boolean;
   /** ISO timestamp. */
   published: string;
-  addedAt?: string;
   description: string;
   thumbnail: string;
   live?: boolean;

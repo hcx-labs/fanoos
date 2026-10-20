@@ -24,6 +24,7 @@ globalThis.fetch = async (input, init) => {
  }
  const id = url.hostname.split(".")[0]; assert.ok([A, B].includes(id));
  assert.equal(headers.get("x-plex-token"), `private-server-token-${id}`);
+ if (url.pathname === "/library/metadata/1/thumb/1") return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/jpeg" } });
  if (url.pathname === "/identity") return container({ machineIdentifier: id });
  if (url.pathname === "/library/sections") return container({ Directory: [{ key: "10", title: "Movies", type: "movie" }, { key: "20", title: "TV", type: "show" }] });
  if (url.pathname === "/library/sections/10/all") return container({ Metadata: [movie], totalSize: 1 });
@@ -73,6 +74,29 @@ test("Plex provider contract", async (t) => {
   assert.equal(libraries.length, 4); assert.notEqual(libraries[0].id, libraries[2].id);
   assert.ok(!JSON.stringify(libraries).includes("private-server-token"));
  });
+ await t.test("artwork URLs stay stable and the shared cache avoids repeat Plex image downloads", async () => {
+  const { image } = await import("./catalog.ts");
+  const { serverFor } = await import("./client.ts");
+  const server = await serverFor(ref, A);
+  const path = image(ref, server, "/library/metadata/1/thumb/1")!;
+  const clock = Date.now;
+  const now = clock();
+  try {
+    Date.now = () => Math.floor(now / 86400000) * 86400000 + 3600000;
+    const first = image(ref, server, "/library/metadata/1/thumb/1");
+    Date.now = () => Math.floor(now / 86400000) * 86400000 + 3602000;
+    assert.equal(image(ref, server, "/library/metadata/1/thumb/1"), first);
+  } finally { Date.now = clock; }
+  const count = () => requests.filter((r) => r.url.pathname === "/library/metadata/1/thumb/1").length;
+  const before = count();
+  for (let i = 0; i < 2; i++) {
+   const response = await service.app.request(path);
+   assert.equal(response.status, 200);
+   assert.equal(response.headers.get("cache-control"), "private, max-age=86400");
+   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [1, 2, 3]);
+  }
+  assert.equal(count(), before + 1);
+ });
  await t.test("shared catalog cache avoids repeat upstream reads while resume and playback stay fresh", async () => {
   const sections = () => requests.filter((r) => r.url.pathname === "/library/sections").length;
   const before = sections();
@@ -93,13 +117,40 @@ test("Plex provider contract", async (t) => {
   assert.equal((await api(`/channels/${A}.m.1?accounts=${ref}&section=${B}.m.2`)).status, 400);
   const movies = await (await api(`/channels/${A}.l.10?accounts=${ref}`)).json(); assert.equal(movies.videos[0].title, "Test Movie");
  });
+ await t.test("catalog page sizes reach Plex and explicit sync refreshes the shared browse cache", async () => {
+  const path = `/channels/${A}.l.20?accounts=${ref}&limit=15&sort=new`;
+  await api(path);
+  const reads = () => requests.filter((r) => r.url.pathname === "/library/sections/20/all" && r.url.searchParams.get("X-Plex-Container-Size") === "15").length;
+  const before = reads(); assert.ok(before > 0);
+  const upstream = requests.findLast((r) => r.url.pathname === "/library/sections/20/all")!.url;
+  assert.equal(upstream.searchParams.get("sort"), "originallyAvailableAt:desc");
+  await api(path); assert.equal(reads(), before);
+  await api(path + "&refresh=1"); assert.equal(reads(), before + 1);
+  await api(path); assert.equal(reads(), before + 1);
+  await api(`/channels/${A}.l.20?accounts=${ref}&limit=6&next=15`);
+  const mobile = requests.findLast((r) => r.url.pathname === "/library/sections/20/all")!.url;
+  assert.equal(mobile.searchParams.get("X-Plex-Container-Size"), "6");
+  assert.equal(mobile.searchParams.get("X-Plex-Container-Start"), "15");
+ });
  await t.test("movies have their own detail parent and release dates", async () => {
   const page = await (await api(`/channels/${A}.m.4?accounts=${ref}`)).json();
   assert.equal(page.channel.kind, "movie"); assert.equal(page.channel.name, "Test Movie");
   assert.equal(page.videos.length, 1); assert.equal(page.sections, undefined);
   assert.equal(page.videos[0].channelId, page.channel.id);
   assert.equal(page.videos[0].published, "2001-12-19T00:00:00.000Z");
-  assert.notEqual(page.videos[0].addedAt, page.videos[0].published);
+  assert.equal(page.videos[0].addedAt, undefined);
+ });
+ await t.test("release dates drive curation even when old media was imported today", async () => {
+  const { releaseDate, showChannel, video } = await import("./catalog.ts");
+  const { serverFor } = await import("./client.ts");
+  const server = await serverFor(ref, A);
+  const imported = { ...movie, addedAt: Math.floor(Date.now() / 1000) };
+  assert.equal(video(ref, server, imported).published, "2001-12-19T00:00:00.000Z");
+  assert.equal(showChannel(ref, server, imported).lastActivity, Date.parse("2001-12-19") / 1000);
+  assert.equal(releaseDate({ ...imported, originallyAvailableAt: undefined }), "");
+  assert.equal(releaseDate({ ...imported, originallyAvailableAt: "not-a-date" }), "");
+  assert.equal((await api(`/feed?accounts=${ref}`)).status, 200);
+  assert.ok(requests.some((r) => r.url.pathname === "/library/sections/10/all" && r.url.searchParams.get("sort") === "originallyAvailableAt:desc"));
  });
  await t.test("embedded subtitles and selected audio get scoped playback routes", async () => {
   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();

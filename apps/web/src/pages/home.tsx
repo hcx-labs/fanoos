@@ -1,3 +1,4 @@
+import { SectionBar } from "@/components/section-bar";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link } from "react-router";
 import { LayoutGrid, Link2, List, Settings2, Sparkles, X } from "lucide-react";
@@ -146,15 +147,15 @@ export function HomePage() {
   const feedTop = useRef<HTMLDivElement>(null);
   // One continuous feed; the quick filters narrow it.
   // Only offer ranges that have something in them.
-  const rangeCounts = useMemo(() => ranges.map((r) => [r.label, rest.filter((v) => inRange((v.addedAt ?? v.published), r.label)).length] as const), [rest]);
+  const rangeCounts = useMemo(() => ranges.map((r) => [r.label, rest.filter((v) => inRange(v.published, r.label)).length] as const), [rest]);
   const range = picked === undefined ? (rangeCounts.find(([, count]) => count > 0)?.[0] ?? null) : picked;
-  const shown = useMemo(() => (range ? rest.filter((v) => inRange((v.addedAt ?? v.published), range)) : rest), [rest, range]);
+  const shown = useMemo(() => (range ? rest.filter((v) => inRange(v.published, range)) : rest), [rest, range]);
   // Where each group starts in the feed (the cards FeedBar watches).
   const startOf = useMemo(() => {
     const starts = new Map<string, string>();
     let previous = "";
     for (const v of shown) {
-      const b = bucket((v.addedAt ?? v.published));
+      const b = bucket(v.published);
       if (b !== previous) starts.set(itemKey(v), b);
       previous = b;
     }
@@ -467,16 +468,11 @@ function FeedBar({
     for (const el of firsts) observer.observe(el);
     return () => observer.disconnect();
   }, [shown, ref]);
-  const label = range ?? current ?? (shown[0] ? bucket((shown[0].addedAt ?? shown[0].published)) : "");
-  const items = range ? shown : shown.filter((v) => bucket((v.addedAt ?? v.published)) === label);
+  const label = range ?? current ?? (shown[0] ? bucket(shown[0].published) : "");
+  const items = range ? shown : shown.filter((v) => bucket(v.published) === label);
 
   return (
-    <div ref={ref} className="pointer-events-none sticky top-16 z-20 mt-12 flex flex-wrap items-center gap-x-3 gap-y-2 py-3 select-none">
-      {/* Solid pills: readable over any thumbnail or text, light or dark. */}
-      <div className="bg-background flex h-9 items-baseline gap-2 rounded-full border px-4 pt-1.5 shadow-lg shadow-black/15">
-        <h2 className="font-display text-base font-semibold">{label}</h2>
-        <span className="text-muted-foreground text-xs font-medium">{countLabel(items)}</span>
-      </div>
+    <SectionBar ref={ref} title={label} detail={countLabel(items)}>
       <div className="pointer-events-auto ml-auto flex flex-wrap gap-1.5" role="group" aria-label="Show videos from">
         {rangeCounts
           .filter(([, count]) => count > 0)
@@ -496,7 +492,7 @@ function FeedBar({
             </button>
           ))}
       </div>
-    </div>
+    </SectionBar>
   );
 }
 
@@ -610,7 +606,7 @@ function EpisodeCard({ video }: { video: Video }) {
   );
 }
 
-const byNewest = (a: Video, b: Video) => (b.addedAt ?? b.published).localeCompare(a.addedAt ?? a.published);
+const byNewest = (a: Video, b: Video) => b.published.localeCompare(a.published);
 
 /** "12 videos", "3 episodes", or "12 videos · 3 episodes". */
 function countLabel(items: Video[]) {
@@ -618,7 +614,7 @@ function countLabel(items: Video[]) {
   const videos = items.length - episodes;
   return [videos && `${videos} ${videos === 1 ? "video" : "videos"}`, episodes && `${episodes} ${episodes === 1 ? "episode" : "episodes"}`].filter(Boolean).join(" · ");
 }
-const isRecent = (v: Video) => Date.now() - new Date((v.addedAt ?? v.published)).getTime() < 7 * DAY;
+const isRecent = (v: Video) => Date.now() - new Date(v.published).getTime() < 7 * DAY;
 
 function FeedSkeleton() {
   return (
