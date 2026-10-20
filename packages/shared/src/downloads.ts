@@ -44,7 +44,6 @@ export type DownloadLibrary = {
   usedBytes: number;
   freeBytes: number;
   totalDiskBytes: number;
-  limitBytes: number;
   profileName: string;
   server: string;
 };

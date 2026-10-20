@@ -21,9 +21,9 @@ rebuilding/restarting the desktop app. No server is bundled.
 
 Downloads stays in the desktop sidebar online and offline. On a YouTube watch page,
 choose Download, a supported video quality, one audio track, and optional captions.
-The queue supports pause, resume/retry, cancellation, deletion, and a device storage
-limit. Downloads are grouped by channel/show and searchable by title, channel/show,
-and description. Online playback of a download keeps the normal online navigation.
+The queue supports pause, resume/retry, cancellation, and deletion. Downloads use
+available disk space and stop before exhausting it. Downloads are grouped by
+channel/show; offline search matches titles, channels/shows, and descriptions. Online playback of a download keeps the normal online navigation.
 
 Media is saved under `offline-media` in Electron's user-data directory. An atomically
 updated `downloads.json` holds the queue and metadata: original/community titles,

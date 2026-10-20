@@ -106,12 +106,22 @@ test('profile isolation, sign-out locking, and safe source URLs', async (t) => {
   assert.throws(() => d.detail(item.id), /sign in/);
 });
 
-test('storage limits and low disk space fail before queuing', async (t) => {
+test('old storage caps are discarded and no longer block downloads', async (t) => {
+  const { downloads, create } = await fixture(t);
+  downloads.data.limitBytes = 1;
+  downloads.save();
+  const restored = create();
+  assert.equal('limitBytes' in restored.data, false);
+  const item = await restored.add(selection);
+  await until(() => ['complete', 'failed'].includes(restored.item(item.id).status));
+  assert.equal(restored.item(item.id).status, 'complete', restored.item(item.id).error);
+});
+
+test('low disk space fails before queuing', async (t) => {
   const { downloads: d } = await fixture(t);
   d.free = () => 0;
   await assert.rejects(d.add(selection), /free disk space/);
   assert.equal(d.list().items.length, 0);
-  assert.throws(() => d.setLimit(-1), /storage limit/);
 });
 
 test('offline progress tracks only changed items for later merging', async (t) => {

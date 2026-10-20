@@ -7,7 +7,7 @@ if (location.protocol === 'file:') {
     platform: process.platform,
     offline: location.protocol === 'fanoos-offline:',
     downloads: {
-      ...Object.fromEntries(['connect', 'list', 'plan', 'add', 'pause', 'resume', 'remove', 'detail', 'state', 'limit', 'play', 'open', 'reconnect', 'disconnect'].map((method) => [method, (value) => ipcRenderer.invoke(`downloads:${method}`, value)])),
+      ...Object.fromEntries(['connect', 'list', 'plan', 'add', 'pause', 'resume', 'remove', 'detail', 'state', 'play', 'open', 'reconnect', 'disconnect'].map((method) => [method, (value) => ipcRenderer.invoke(`downloads:${method}`, value)])),
       saveState: (data) => ipcRenderer.send('downloads:state-save', data),
       subscribe: (listener) => { const handler = () => listener(); ipcRenderer.on('downloads:changed', handler); return () => ipcRenderer.removeListener('downloads:changed', handler); },
     },

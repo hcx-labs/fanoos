@@ -10,7 +10,6 @@ export type DesktopDownloads = {
   detail(id: string): Promise<OfflineVideoDetail>;
   state(): Promise<{ data: Record<string, unknown> | null; dirty: boolean; pendingProgress?: Record<string, number | null>; pendingHistory?: Record<string, { id: string; at: string }> }>;
   saveState(data: unknown): void;
-  limit(bytes: number): Promise<void>;
   play(id: string): Promise<void>;
   open(): Promise<void>;
   reconnect(): Promise<boolean>;

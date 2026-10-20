@@ -4,7 +4,6 @@ const path = require('node:path');
 const { createHash, randomBytes } = require('node:crypto');
 const { Readable } = require('node:stream');
 
-const GiB = 1024 ** 3;
 const scopeOf = (server, profileId) => createHash('sha256').update(`${server}\n${profileId}`).digest('hex');
 const xml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 const fingerprint = (t) => JSON.stringify([t.id, t.mimeType, t.codecs, t.bytes, t.revision, t.initRange, t.indexRange, t.width, t.height, t.fps]);
@@ -41,7 +40,8 @@ class Downloads {
     this.fetch = fetcher;
     this.notify = notify;
     fs.mkdirSync(this.root, { recursive: true });
-    try { this.data = JSON.parse(fs.readFileSync(this.journal, 'utf8')); } catch { this.data = { items: [], states: {}, limitBytes: 20 * GiB, context: null }; }
+    try { this.data = JSON.parse(fs.readFileSync(this.journal, 'utf8')); } catch { this.data = { items: [], states: {}, context: null }; }
+    delete this.data.limitBytes; // Discard the retired per-device cap from older journals.
     this.context = this.data.context;
     for (const item of this.data.items) if (['queued', 'downloading'].includes(item.status)) { item.status = 'paused'; item.error = 'Paused after restart. Resume when connected.'; }
     this.active = null;
@@ -87,11 +87,7 @@ class Downloads {
     return { id, videoId, video: { ...video, thumbnail: item.hasThumbnail ? `fanoos-offline://app/media/${id}/thumbnail` : video.thumbnail }, channel: { ...channel, avatar: item.hasAvatar ? `fanoos-offline://app/media/${id}/channel-avatar` : channel.avatar }, status, quality, audio, received, total, createdAt, downloadedAt, error, warning };
   }
   list() {
-    return { items: this.data.items.filter((i) => i.scope === this.context?.scope).map((i) => this.view(i)), usedBytes: this.used(), freeBytes: this.free(), totalDiskBytes: (() => { const disk = fs.statfsSync(this.root); return Number(disk.blocks) * Number(disk.bsize); })(), limitBytes: this.data.limitBytes, profileName: this.context?.profileName ?? '', server: this.context?.server ?? '' };
-  }
-  setLimit(bytes) {
-    if (!Number.isSafeInteger(bytes) || bytes < GiB || bytes > 500 * GiB) throw new Error('Choose a storage limit between 1 and 500 GB.');
-    this.data.limitBytes = bytes; this.save();
+    return { items: this.data.items.filter((i) => i.scope === this.context?.scope).map((i) => this.view(i)), usedBytes: this.used(), freeBytes: this.free(), totalDiskBytes: (() => { const disk = fs.statfsSync(this.root); return Number(disk.blocks) * Number(disk.bsize); })(), profileName: this.context?.profileName ?? '', server: this.context?.server ?? '' };
   }
   async request(server, resource, init = {}) {
     const url = new URL(resource, server);
@@ -119,7 +115,6 @@ class Downloads {
     const audio = plan.tracks.find((t) => t.id === selection.audioTrack && t.kind === 'audio');
     if (!video || !audio) throw new Error('These tracks are no longer available. Choose your download quality again.');
     const estimate = (video.bytes || video.bandwidth * plan.duration / 8) + (audio.bytes || audio.bandwidth * plan.duration / 8);
-    if (this.used() + estimate > this.data.limitBytes) throw new Error('Your download storage limit would be exceeded. Remove a download or raise the limit.');
     if (estimate + 64 * 1024 ** 2 > this.free()) throw new Error('There is not enough free disk space for this download.');
     const item = {
       id: randomBytes(16).toString('hex'), scope: ctx.scope, server: ctx.server, profileId: ctx.profileId,
@@ -191,7 +186,7 @@ class Downloads {
     try {
       for await (const chunk of res.body) {
         signal.throwIfAborted();
-        if (this.used() + chunk.byteLength > this.data.limitBytes || this.free() < chunk.byteLength + 32 * 1024 ** 2) throw new Error('Download storage is full. Free some space, then resume.');
+        if (this.free() < chunk.byteLength + 32 * 1024 ** 2) throw new Error('Download storage is full. Free some space, then resume.');
         let written = 0;
         while (written < chunk.byteLength) { const result = await file.write(chunk, written, chunk.byteLength - written); written += result.bytesWritten; }
         offset += chunk.byteLength; item.received += chunk.byteLength;
@@ -209,7 +204,7 @@ class Downloads {
     for await (const chunk of res.body) { length += chunk.byteLength; if (length > maxBytes) throw new Error(`${filename} is too large.`); chunks.push(chunk); }
     const body = Buffer.concat(chunks);
     if (validate && !validate(body)) throw new Error(`${filename} has an invalid format.`);
-    if (this.used() + body.length > this.data.limitBytes || this.free() < body.length + 32 * 1024 ** 2) throw new Error('Download storage is full.');
+    if (this.free() < body.length + 32 * 1024 ** 2) throw new Error('Download storage is full.');
     await fsp.writeFile(path.join(this.folder(item), filename), body);
   }
   async run(item, signal) {

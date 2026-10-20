@@ -105,7 +105,6 @@ for (const [method, work] of Object.entries({
   remove: (id) => downloads.remove(id),
   detail: (id) => downloads.detail(id),
   state: () => downloads.readState(),
-  limit: (bytes) => downloads.setLimit(bytes),
   play: (id) => { downloads.detail(id); return openDownloads(id); },
   open: () => openDownloads(),
   reconnect: () => loadServer(),

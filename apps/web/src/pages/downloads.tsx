@@ -105,7 +105,7 @@ export function DownloadsPage() {
       />
       <div className="text-muted-foreground flex flex-wrap gap-x-6 gap-y-2">
         <span className="inline-flex items-center gap-2"><span className="bg-muted-foreground/50 size-2 rounded-full" />Other files · {fileSize(Math.max(0, library.totalDiskBytes - library.freeBytes - library.usedBytes))}</span>
-        <span className="inline-flex items-center gap-2"><span className="bg-brand size-2 rounded-full" />Fanoos · {fileSize(library.usedBytes)} of {fileSize(library.limitBytes)} limit</span>
+        <span className="inline-flex items-center gap-2"><span className="bg-brand size-2 rounded-full" />Fanoos · {fileSize(library.usedBytes)}</span>
         <span className="inline-flex items-center gap-2"><span className="bg-secondary size-2 rounded-full border" />Free · {fileSize(library.freeBytes)}</span>
       </div>
 
