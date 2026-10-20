@@ -12,7 +12,7 @@ let linked = false; let resourceFailure = false;
 const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, originallyAvailableAt: "2001-12-19", year: 2001, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", Stream: [] }] }] };
 const show = { ratingKey: "1", type: "show", title: "Test Show", leafCount: 1, thumb: "/library/metadata/1/thumb/1" };
 const season = { ratingKey: "2", type: "season", title: "Season 1", parentRatingKey: "1", leafCount: 1 };
-const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", Stream: [{ id: 8, streamType: 2, languageCode: "ja", displayTitle: "Japanese", selected: true }, { id: 9, streamType: 2, languageCode: "en", displayTitle: "English" }, { id: 7, streamType: 3, codec: "srt", language: "English", languageCode: "en" }, { id: 10, streamType: 3, codec: "srt", key: "/library/streams/10", languageCode: "en", displayTitle: "English (external)" }] }] }] };
+const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", Stream: [{ id: 8, streamType: 2, languageCode: "ja", displayTitle: "Japanese", selected: true }, { id: 9, streamType: 2, languageCode: "en", displayTitle: "English" }, { id: 7, streamType: 3, codec: "srt", language: "English", languageCode: "en" }, { id: 10, streamType: 3, codec: "srt", key: "/library/streams/10", languageCode: "en", displayTitle: "English (external)" }, { id: 11, streamType: 3, codec: "pgs", languageCode: "en", displayTitle: "English (PGS)" }] }] }] };
 const container = (data: object) => Response.json({ MediaContainer: data });
 globalThis.fetch = async (input, init) => {
  const url = new URL(String(input)); const headers = new Headers(init?.headers); requests.push({ url, headers, method: init?.method || "GET" });
@@ -42,7 +42,7 @@ globalThis.fetch = async (input, init) => {
  if (url.pathname.includes("/chunk-1.m4s")) return new Response("segment", { headers: { "content-type": "video/mp4" } });
  if (url.pathname === "/library/parts/33" && init?.method === "PUT") return new Response(null, { status: 200 });
  if (url.pathname === "/library/parts/44/file.mp4") return new Response("part", { status: 206, headers: { "content-range": "bytes 0-3/4", "content-type": "video/mp4" } });
- if (url.pathname === "/library/streams/10") return new Response("WEBVTT\n", { headers: { "content-type": "text/vtt" } });
+ if (url.pathname === "/library/streams/10") return new Response("WEBVTT\n\n00:00.000 --> 00:03.000\nHello Fanoos\n", { headers: { "content-type": "text/vtt" } });
  if (url.pathname === "/:/timeline" || url.pathname.endsWith("/ping") || url.pathname.endsWith("/stop")) return new Response(null, { status: 200 });
  throw Error(`Unexpected fixture path ${url.pathname}`);
 };
@@ -73,6 +73,20 @@ test("Plex provider contract", async (t) => {
   assert.equal(libraries.length, 4); assert.notEqual(libraries[0].id, libraries[2].id);
   assert.ok(!JSON.stringify(libraries).includes("private-server-token"));
  });
+ await t.test("shared catalog cache avoids repeat upstream reads while resume and playback stay fresh", async () => {
+  const sections = () => requests.filter((r) => r.url.pathname === "/library/sections").length;
+  const before = sections();
+  await api(`/following?accounts=${ref}`); await api(`/following?accounts=${ref}`);
+  assert.equal(sections(), before);
+  const count = () => requests.filter((r) => r.url.pathname === "/library/metadata/4" && r.url.searchParams.has("includeChapters")).length;
+  const first = count();
+  await api(`/videos/${A}.m.4?accounts=${ref}`); await api(`/videos/${A}.m.4?accounts=${ref}`);
+  assert.equal(count(), first + 2);
+  const onDeck = () => requests.filter((r) => r.url.pathname === "/library/onDeck").length;
+  const previous = onDeck();
+  await api(`/continue?accounts=${ref}`); await api(`/continue?accounts=${ref}`);
+  assert.equal(onDeck(), previous + 4);
+ });
  await t.test("browses movies, shows, seasons and paginated libraries", async () => {
   const tv = await (await api(`/channels/${A}.l.20?accounts=${ref}`)).json(); assert.equal(tv.channels[0].kind, "series"); assert.equal(tv.next, "1");
   const series = await (await api(`/channels/${A}.m.1?accounts=${ref}`)).json(); assert.equal(series.sections.length, 1); assert.equal(series.videos[0].episode.number, "1");
@@ -89,13 +103,29 @@ test("Plex provider contract", async (t) => {
  });
  await t.test("embedded subtitles and selected audio get scoped playback routes", async () => {
   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
-  assert.equal(detail.stream.subtitles.length, 2);
-  assert.equal((await service.app.request(detail.stream.subtitles[1].url)).status, 200);
+  assert.equal(detail.stream.subtitles.length, 3);
+  assert.equal(detail.stream.subtitles[0].render, undefined);
+  assert.match(detail.stream.subtitles[0].url, /^\/public\/text-subtitle\//);
+  assert.match(detail.stream.subtitles[1].url, /^\/public\/text-subtitle\//);
+  assert.equal((await service.app.request(detail.stream.subtitles[0].url + "tampered")).status, 403);
   assert.deepEqual(detail.stream.audioTracks.map((track: { label: string }) => track.label), ["Japanese", "English"]);
   const track = detail.stream.audioTracks[1];
   assert.ok(track.sources.every((source: { stream: { dash?: string; progressive?: string } }) => source.stream.dash && !source.stream.progressive));
   assert.equal((await service.app.request(track.sources[0].stream.dash)).status, 200);
   assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("audioStreamID"), "9");
+ });
+ await t.test("prepares text subtitles asynchronously and reuses the shared cache", async () => {
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
+  const url = detail.stream.subtitles[1].url;
+  let response = await service.app.request(url);
+  assert.equal(response.status, 202);
+  for (let n = 0; n < 100 && response.status === 202; n++) {
+   await new Promise((resolve) => setTimeout(resolve, 20)); response = await service.app.request(url);
+  }
+  assert.equal(response.status, 200); assert.match(await response.text(), /Hello Fanoos/);
+  const reads = requests.filter((r) => r.url.pathname === "/library/streams/10").length;
+  assert.equal((await service.app.request(url)).status, 200);
+  assert.equal(requests.filter((r) => r.url.pathname === "/library/streams/10").length, reads);
  });
  await t.test("searches libraries and returns continue-watching progress", async () => {
   const search = await (await api(`/search?accounts=${ref}&q=Test`)).json(); assert.equal(search.channels.length, 2); assert.equal(search.videos.length, 4);
@@ -113,10 +143,10 @@ test("Plex provider contract", async (t) => {
   assert.ok(!xml.includes("X-Plex-Token")); assert.ok(xml.includes("$Number$")); assert.match(xml, /\/api\/b\/plex\/public\/media\//);
   const media = /media="([^"]+)"/.exec(xml)![1]!.replace("$Number$", "1").replace(/&amp;/g, "&").replace("/api/b/plex", "");
   assert.equal(await (await service.app.request(media)).text(), "segment");
-  assert.equal(detail.stream.subtitles[0].render, "server");
-  const burned = await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash + "?subtitle=7"); assert.equal(burned.status, 200);
+  assert.equal(detail.stream.subtitles[2].render, "server");
+  const burned = await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash + "?subtitle=11"); assert.equal(burned.status, 200);
   assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("subtitles"), "burn");
-  assert.ok(requests.some((r) => r.method === "PUT" && r.url.searchParams.get("subtitleStreamID") === "7"));
+  assert.ok(requests.some((r) => r.method === "PUT" && r.url.searchParams.get("subtitleStreamID") === "11"));
   assert.equal((await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.dash + "?subtitle=999")).status, 403);
   assert.equal((await service.app.request(detail.stream.sources.find((s: { id: string }) => s.id === "transcode-720").stream.session.release, { method: "POST" })).status, 200);
  });

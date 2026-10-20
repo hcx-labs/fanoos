@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, Navigate, useParams } from "react-router";
 import { BellOff, Check, Rss, Search, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
@@ -48,6 +48,8 @@ export function ChannelPage() {
   const page = state.data ?? (last.current?.identity === identity ? last.current.page : undefined);
   useTitle(page?.channel.name ?? (state.status === "loading" ? null : "Not found"));
   useArtworkGlow(page?.channel, state.status === "loading");
+
+  if (page?.channel.kind === "library" && page.channel.libraryType === "movies") return <Navigate to={`/movies?library=${encodeURIComponent(itemKey(page.channel))}`} replace />;
 
   if (page?.channel.kind === "library") return <LibraryPage page={page} loading={state.status === "loading"} error={state.error} reload={reload} loadMore={() => void loadMore()} loadingMore={loadingMore} moreError={moreError} query={filter} onQuery={setFilter} onSearch={() => setQuery(filter.trim())} />;
 

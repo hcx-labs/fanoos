@@ -167,7 +167,9 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
   const prefs = useTrackPrefs(scopes);
   const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, prefs.subtitles, video.episode?.audio, settings.captions, navigator.languages));
   const versions = video.episode?.versions ?? [];
+  const [subtitleAttempt, setSubtitleAttempt] = useState(0);
   const chooseSubtitle = useCallback((id: string) => {
+    setSubtitleAttempt((attempt) => attempt + 1);
     setSubtitle(id);
     setServerSubtitle(subtitles.find((t) => subtitleKey(t) === id)?.render === "server" ? id : "");
     actions.trackPrefs(scopes, { subtitles: subtitles.find((t) => subtitleKey(t) === id)?.locale ?? "" });
@@ -397,7 +399,45 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
 
   // VTT cues are timed by a hidden native track and drawn by SubtitleOverlay in the viewer's
   // style; ASS keeps its authored styling on the JASSUB canvas.
-  const track = subtitles.find((t) => subtitleKey(t) === subtitle);
+  const selectedSubtitle = subtitles.find((t) => subtitleKey(t) === subtitle);
+  const [preparedSubtitle, setPreparedSubtitle] = useState<{ source: string; url: string } | null>(null);
+  const needsPreparation = Boolean(selectedSubtitle?.url.includes("/text-subtitle/"));
+  useEffect(() => {
+    if (!needsPreparation || !selectedSubtitle) return;
+    setPreparedSubtitle(null);
+    const abort = new AbortController();
+    const id = `subtitle-${key}`;
+    let objectUrl: string | undefined;
+    toast.loading("Preparing subtitles…", { id });
+    void (async () => {
+      let response: Response;
+      const started = Date.now();
+      do {
+        response = await fetch(selectedSubtitle.url, { signal: abort.signal });
+        if (response.status !== 202) break;
+        if (Date.now() - started > 11 * 60_000) throw new Error("Preparation took too long. Select this track again to retry.");
+        await new Promise<void>((resolve, reject) => {
+          const stop = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+          const timer = setTimeout(() => { abort.signal.removeEventListener("abort", stop); resolve(); }, 2000);
+          if (abort.signal.aborted) stop(); else abort.signal.addEventListener("abort", stop, { once: true });
+        });
+      } while (!abort.signal.aborted);
+      if (abort.signal.aborted) return;
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.error || "Select the subtitle track again to retry.");
+      }
+      const blob = await response.blob();
+      if (abort.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setPreparedSubtitle({ source: selectedSubtitle.url, url: objectUrl });
+      toast.dismiss(id);
+    })().catch((error: Error) => {
+      if (!abort.signal.aborted) toast.error("Subtitles couldn't be loaded", { id, description: error.message });
+    });
+    return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); toast.dismiss(id); };
+  }, [needsPreparation, selectedSubtitle, key, subtitleAttempt]);
+  const track = useMemo(() => !needsPreparation ? selectedSubtitle : preparedSubtitle?.source === selectedSubtitle?.url ? { ...selectedSubtitle!, url: preparedSubtitle!.url } : undefined, [needsPreparation, selectedSubtitle, preparedSubtitle]);
   const [vttTrack, setVttTrack] = useState<TextTrack | null>(null);
   // The styled-subtitle renderer and its script's own styles (for "Use for styled subtitles").
   const assRenderer = useRef<JASSUB | null>(null);

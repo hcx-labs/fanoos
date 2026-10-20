@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { SharedCache } from "../../kit/src/cache.ts";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { decrypt } from "./crypto.ts";
@@ -59,10 +61,22 @@ export async function request(server: Server, resource: string, init: RequestIni
  if (url.origin !== server.url || !resource.startsWith("/") || resource.startsWith("//")) throw fail(403, "Invalid Plex resource.");
  return fetch(url, { ...init, headers: { ...headers(server.clientId, server.token), ...init.headers }, redirect: "error", signal: init.signal ?? AbortSignal.timeout(30_000) });
 }
-export async function json(server: Server, path: string): Promise<PlexContainer> {
+async function fetchJson(server: Server, path: string): Promise<PlexContainer> {
  const res = await request(server, path);
  if (res.status === 401 || res.status === 403) throw fail(403, "Plex denied access to this library. Check the server's sharing permissions.");
  if (res.status === 404) throw fail(404, "This item is no longer in your Plex library.", "not_found");
  if (!res.ok) throw fail(502, `Plex could not load this library (${res.status}).`, "upstream");
  return await res.json() as PlexContainer;
+}
+
+// Reuse the same Redis-backed stale-while-revalidate cache as YouTube/Crunchyroll.
+// Server access tokens scope private libraries; raw credentials never become Redis keys.
+const libraryCache = new SharedCache<PlexContainer>("libraries-v1", { ttlSeconds: 120, staleSeconds: 300 });
+const metadataCache = new SharedCache<PlexContainer>("metadata-v1", { ttlSeconds: 300, staleSeconds: 600 });
+const browseCache = new SharedCache<PlexContainer>("browse-v1", { ttlSeconds: 60, staleSeconds: 120 });
+export async function json(server: Server, path: string, options: { fresh?: boolean } = {}): Promise<PlexContainer> {
+ if (options.fresh || path.startsWith("/library/onDeck")) return fetchJson(server, path);
+ const key = createHash("sha256").update(JSON.stringify([server.id, server.clientId, server.token, path])).digest("hex");
+ const cache = path === "/library/sections" ? libraryCache : /^\/library\/metadata\/\d+(\?|$)/.test(path) ? metadataCache : browseCache;
+ return cache.get(key, () => fetchJson(server, path));
 }

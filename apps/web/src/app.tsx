@@ -1,3 +1,4 @@
+import { Spinner } from "@/components/ui/spinner";
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { Layout } from "@/components/shell/layout";
@@ -5,7 +6,7 @@ import { PlayerBoundary } from "@/components/player/player-boundary";
 import { ChannelPage } from "@/pages/channel";
 import { DownloadsPage } from "@/pages/downloads";
 import { HomePage } from "@/pages/home";
-import { MoviesPage } from "@/pages/movies";
+import { MoviesPage, ShowsPage } from "@/pages/movies";
 import { LibraryPage } from "@/pages/library";
 import { SearchPage } from "@/pages/search";
 import { SettingsPage } from "@/pages/settings";
@@ -55,7 +56,7 @@ export function App() {
           path="/watch/:backend/:id"
           element={
             <PlayerBoundary>
-              <Suspense fallback={<div role="status" className="page text-muted-foreground">Loading player…</div>}>
+              <Suspense fallback={<div className="text-muted-foreground grid min-h-[calc(100dvh-4rem)] place-items-center"><Spinner className="size-8" aria-label="Loading player" /></div>}>
                 <WatchPage />
               </Suspense>
             </PlayerBoundary>
@@ -71,6 +72,8 @@ export function App() {
         <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/movies" element={<MoviesPage />} />
+        <Route path="/channels" element={<SubscriptionsPage kind="channels" />} />
+        <Route path="/shows" element={<ShowsPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

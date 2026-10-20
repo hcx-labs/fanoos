@@ -53,7 +53,8 @@ import { cn } from "@/lib/utils";
 
 export const nav = [
   { to: "/", label: "Home", icon: House, end: true },
-  { to: "/following", label: "Following", icon: UsersRound },
+  { to: "/channels", label: "Channels", icon: UsersRound },
+  { to: "/shows", label: "Shows", icon: Tv },
   { to: "/movies", label: "Movies", icon: Film },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/library", label: "Library", icon: LibraryBig },

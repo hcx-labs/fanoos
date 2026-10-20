@@ -31,7 +31,7 @@ function merge<T extends { id: string; via?: string[] }>(items: T[]): T[] {
 function offset(value?: string) { if (!value) return 0; if (!/^\d{1,7}$/.test(value)) throw fail(400, "Invalid library page."); return Number(value); }
 function pageQuery(start: number, extra: Record<string, string> = {}) { return new URLSearchParams({ "X-Plex-Container-Start": String(start), "X-Plex-Container-Size": "50", ...extra }); }
 async function detail(ref: string, server: Server, key: string): Promise<VideoDetail> {
- const data = (await json(server, `/library/metadata/${key}?includeChapters=1&includeMarkers=1`)).MediaContainer;
+ const data = (await json(server, `/library/metadata/${key}?includeChapters=1&includeMarkers=1`, { fresh: true })).MediaContainer;
  const item = data.Metadata?.[0]; if (!item || !["movie", "episode"].includes(item.type)) throw fail(404, "This Plex item is not a movie or episode.", "not_found");
  const result = video(ref, server, { ...item, librarySectionID: item.librarySectionID ?? data.librarySectionID, librarySectionTitle: item.librarySectionTitle ?? data.librarySectionTitle });
  let channel; let next: Video[] = [];

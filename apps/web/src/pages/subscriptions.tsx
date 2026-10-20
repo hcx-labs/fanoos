@@ -33,8 +33,8 @@ import type { Channel, LinkedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
 
-export function SubscriptionsPage() {
-  useTitle("Following");
+export function SubscriptionsPage({ kind }: { kind?: "channels" } = {}) {
+  useTitle(kind ? "Channels" : "Sources");
   const source = useSource();
   const { inFeed, feedBackends } = useAccounts();
   const [reload, setReload] = useState(0);
@@ -51,8 +51,8 @@ export function SubscriptionsPage() {
   const [service, setService] = useState("all");
 
   const all = useMemo(
-    () => (state.data ?? []).map((c) => ({ ...c, group: keyOf(c) in overrides ? (overrides[keyOf(c)] ?? undefined) : c.group })),
-    [state.data, overrides],
+    () => (state.data ?? []).filter((channel) => !kind || !channel.kind || channel.kind === "channel").map((c) => ({ ...c, group: keyOf(c) in overrides ? (overrides[keyOf(c)] ?? undefined) : c.group })),
+    [state.data, overrides, kind],
   );
   const channels = useMemo(
     () =>
@@ -62,7 +62,8 @@ export function SubscriptionsPage() {
     [all, query, group, service],
   );
   const shows = channels.filter((c) => c.kind === "series");
-  const plain = channels.filter((c) => c.kind !== "series");
+  const libraries = channels.filter((c) => c.kind === "library");
+  const plain = channels.filter((c) => !c.kind || c.kind === "channel");
   const youtube = all.filter((c) => c.backend === "youtube");
   const setGroupFor = (channel: Channel, g: string | null) => {
     setOverrides((o) => ({ ...o, [keyOf(channel)]: g }));
@@ -73,8 +74,8 @@ export function SubscriptionsPage() {
     <div className="relative">
       <div className="page relative">
         <PageHeader
-          title="Following"
-          description={`Every channel and show from your ${inFeed.length} feed ${inFeed.length === 1 ? "account" : "accounts"}, merged into one list. Group them, hide the noisy ones, or export them. Your feed is built only from this list.`}
+          title={kind ? "Channels" : "Sources"}
+          description={kind ? "The channels you follow, across your connected accounts." : "Manage channels, saved shows, and server libraries across your connected accounts."}
           actions={
             <>
             <Button
@@ -166,9 +167,10 @@ export function SubscriptionsPage() {
           </section>
         )}
 
+        {libraries.length > 0 && <section className="mt-8" aria-labelledby="libraries"><h2 id="libraries" className="font-display mb-4 text-xl font-semibold">Libraries <span className="text-muted-foreground text-sm font-normal">{libraries.length}</span></h2><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{libraries.map((channel) => <ChannelTile key={keyOf(channel)} channel={channel} muted={muted.includes(keyOf(channel))} groups={groups} onGroup={(group) => setGroupFor(channel, group)} />)}</div></section>}
         {(plain.length > 0 || state.status === "loading") && (
           <section className="mt-8" aria-labelledby="channels">
-            {shows.length > 0 && (
+            {(shows.length > 0 || libraries.length > 0) && (
               <h2 id="channels" className="font-display mb-4 text-xl font-semibold">
                 Channels <span className="text-muted-foreground text-sm font-normal">{plain.length}</span>
               </h2>

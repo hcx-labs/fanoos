@@ -143,16 +143,32 @@ credentials; the authorization can also be revoked in Plex's Authorized Devices.
 - Selecting Plex on Home reveals the same compact filter pills as YouTube, populated
   from accessible server libraries. Recent additions populate Home; Plex resume positions populate Continue watching.
   Search covers accessible servers, movies, shows and episodes.
+- Channels, Shows and Movies have their own navigation entries. The sidebar shows
+  sources relevant to the current section; Sources retains account/group management.
 - Original quality reads the original media file without transcoding. Browser codec
   and container support still apply. Common H.264/AAC MP4 files default to original.
-- Explicit Transcode choices ask Plex for the selected resolution and bitrate in
-  H.264/AAC DASH. These use the Plex server's transcoder; playback requirements and
+- Quality transcodes request H.264 DASH at the selected resolution and bitrate.
+  Audio stays original until Audio → Transcode is chosen; that option requests AAC
+  stereo and lets Plex decide whether video conversion is needed. These use the
+  Plex server's transcoder; playback requirements and
   server permissions still apply. Quality changes retain the playback position.
 - Signed media URLs proxy artwork, file byte ranges, DASH manifests/segments, and
   text subtitles through Fanoos. Plex credentials and private server URLs stay on
   the backend. Intro/credit markers and chapters use the existing player controls.
 - Plex Home managed-user switching, music, live TV and Plex's free streaming catalog
-  are outside this integration. Image-based subtitles are not yet selectable.
+  are outside this integration. Image-based subtitles use Plex burn-in.
+- Plex library listings, metadata and browse pages use the shared Redis-backed
+  cache (two minutes, five minutes and one minute respectively), scoped by server
+  and account credentials. Playback details and continue-watching bypass it; signed
+  playback URLs and sessions are generated fresh.
+- Embedded and external text subtitles are extracted with FFmpeg and rendered by
+  Fanoos: ASS retains styles; other text tracks become WebVTT. The first selection
+  reads the source container on the backend without re-encoding or saving the
+  video/audio. Subtitle text is cached for seven days in the same Redis-backed
+  SharedCache used by YouTube and Crunchyroll.
+  Large remote files can take longer and consume extra backend-to-Plex bandwidth.
+  Native installs need FFmpeg on PATH (or `FFMPEG_PATH`); the Plex Docker image
+  includes it. No automatic burn-in fallback is used for failed text extraction.
 
 The backend must be able to reach each Plex server from its own network (including
 from inside Docker). HTTPS certificates remain verified. Direct-play media must be
