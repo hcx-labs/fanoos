@@ -5,10 +5,11 @@
  * device signed in to the account shares it. Only the theme stays per-browser (theme.tsx).
  */
 import { useSyncExternalStore } from "react";
-import { api } from "./api";
+import { toast } from "sonner";
+import { api, RequestError } from "./api";
 import { storageKey } from "./brand";
 import { defaultSubtitleStyle, normalizeSubtitleStyle, type SubtitleStyle } from "./subtitle-style";
-import type { SegmentCategory } from "./types";
+import type { SegmentCategory, Video } from "./types";
 
 export type SegmentAction = "skip" | "mute" | "show" | "off";
 
@@ -44,9 +45,46 @@ type State = {
   searches: string[];
   /** Hidden channels and shows. */
   muted: string[];
-  /** Preferred audio and subtitle languages for episodes ("ja-JP", "en-US"; "" = off). */
+  /** Last-chosen audio and subtitle languages anywhere ("ja-JP", "en-US"; "" = off): the fallback for new shows and channels. */
   languages?: { audio?: string; subtitles?: string };
+  /** Choices made while watching, per season, show or channel (playbackScopes), most recent last. */
+  scoped?: Record<string, TrackPrefs>;
 };
+
+export type TrackPrefs = { audio?: string; subtitles?: string; subtitleStyle?: SubtitleStyle };
+
+const MAX_SCOPES = 300;
+
+/**
+ * Where a video's track choices are remembered, most specific first: an episode's season, then
+ * its show; a video's channel.
+ */
+export function playbackScopes(video: Pick<Video, "backend" | "channelId" | "episode">): string[] {
+  const e = video.episode;
+  if (!e) return [`${video.backend}/channel/${video.channelId}`];
+  return [...(e.seasonId ? [`${video.backend}/season/${e.seasonId}`] : []), `${video.backend}/show/${e.seriesId}`];
+}
+
+/** The first scope that has `field`, if any. */
+function scoped<K extends keyof TrackPrefs>(s: State, scopes: string[], field: K): TrackPrefs[K] | undefined {
+  for (const scope of scopes) {
+    const value = s.scoped?.[scope]?.[field];
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/** Track choices for these scopes, falling back to the last choice anywhere. */
+export function trackPrefs(s: State, scopes: string[]): Required<Pick<TrackPrefs, "subtitleStyle">> & Pick<TrackPrefs, "audio" | "subtitles"> {
+  return {
+    audio: scoped(s, scopes, "audio") ?? s.languages?.audio,
+    subtitles: scoped(s, scopes, "subtitles") ?? s.languages?.subtitles,
+    subtitleStyle: scoped(s, scopes, "subtitleStyle") ?? s.settings.subtitleStyle,
+  };
+}
+
+/** The audio language chosen for these scopes themselves, without the global fallback. */
+export const scopedAudio = (s: State, scopes: string[]) => scoped(s, scopes, "audio");
 
 const defaults: State = {
   settings: {
@@ -102,6 +140,9 @@ function normalize(saved: Partial<State> | null | undefined): State {
       segments: { ...defaults.settings.segments, ...saved.settings?.segments },
       subtitleStyle: normalizeSubtitleStyle(saved.settings?.subtitleStyle),
     },
+    scoped: Object.fromEntries(
+      Object.entries(saved.scoped ?? {}).map(([k, v]) => [k, v.subtitleStyle ? { ...v, subtitleStyle: normalizeSubtitleStyle(v.subtitleStyle) } : v]),
+    ),
   };
 }
 
@@ -113,11 +154,61 @@ const emit = () => listeners.forEach((listener) => listener());
 
 const SAVE_DELAY = 1000;
 
+/** The server refuses bodies longer than this (MAX_BYTES in apps/server/src/routes/data.ts, counted in characters). */
+const MAX_SAVE_LENGTH = 512 * 1024;
+/** Browsers drop keepalive requests (tab closing) with bodies over 64 KiB, counted in bytes. */
+const KEEPALIVE_LENGTH = 64 * 1024 - 512;
+
+/** Drop the older half of everything that's kept by recency: positions, history and per-show choices. */
+function trimOldest(s: State): State | null {
+  const half = <T,>(list: T[]) => list.slice(Math.floor(list.length / 2));
+  const progress = Object.entries(s.progress);
+  const scoped = Object.entries(s.scoped ?? {});
+  if (progress.length < 2 && s.history.length < 2 && scoped.length < 2) return null;
+  return {
+    ...s,
+    // Oldest first (re-inserted on use); history is newest first.
+    progress: Object.fromEntries(half(progress)),
+    scoped: Object.fromEntries(half(scoped)),
+    history: s.history.slice(0, Math.ceil(s.history.length / 2)),
+  };
+}
+
+/** The request body, trimming old entries until it fits under the server's limit (null when it can't). */
+function saveBody(): string | null {
+  let body = JSON.stringify({ data: state });
+  while (body.length > MAX_SAVE_LENGTH) {
+    const trimmed = trimOldest(state);
+    if (!trimmed) return null;
+    state = trimmed;
+    emit();
+    body = JSON.stringify({ data: state });
+  }
+  return body;
+}
+
+const tooMuch = () =>
+  toast.error("Couldn't save to your account", { id: "save-too-large", description: "Watch later or hidden channels have grown too large. Remove some and changes will sync again." });
+
 async function save() {
   saveTimer = undefined;
+  const body = saveBody();
+  if (body === null) return tooMuch();
   try {
-    await api("/me/data", { method: "PUT", body: { data: state } });
-  } catch {
+    const res = await fetch("/api/me/data", { method: "PUT", headers: { "content-type": "application/json" }, body, credentials: "same-origin" });
+    if (!res.ok) throw new RequestError(res.status, await res.json().catch(() => ({ error: res.statusText })));
+  } catch (error) {
+    // Refused for its size (a stricter server): trim old entries and try again, while there are any.
+    if (error instanceof RequestError && error.code === "too_large") {
+      const trimmed = trimOldest(state);
+      if (!trimmed) return tooMuch();
+      state = trimmed;
+      emit();
+      saveTimer = window.setTimeout(save, 0);
+      return;
+    }
+    // Signed out or otherwise refused: retrying the same request won't help.
+    if (error instanceof RequestError && error.status < 500 && error.status !== 408 && error.status !== 429) return;
     // Offline or a server hiccup: try again shortly.
     saveTimer = window.setTimeout(save, 10_000);
   }
@@ -133,15 +224,26 @@ function set(update: (current: State) => State) {
   saveTimer = window.setTimeout(save, SAVE_DELAY);
 }
 
+// Send a pending save while the tab is still alive (switching away, or the first step of closing).
+addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden" || saveTimer === undefined || !loaded) return;
+  window.clearTimeout(saveTimer);
+  void save();
+});
+
 // Don't lose a pending save when the tab closes.
 addEventListener("pagehide", () => {
   if (saveTimer === undefined || !loaded) return;
   window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  const body = saveBody();
+  if (body === null) return;
   void fetch("/api/me/data", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ data: state }),
-    keepalive: true,
+    body,
+    // Past the keepalive limit the browser would refuse it outright; a plain request may still finish.
+    keepalive: new TextEncoder().encode(body).length <= KEEPALIVE_LENGTH,
     credentials: "same-origin",
   });
 });
@@ -251,14 +353,44 @@ export const actions = {
       return { ...s, progress };
     });
   },
-  languages(update: { audio?: string; subtitles?: string }) {
-    set((s) => ({ ...s, languages: { ...s.languages, ...update } }));
+  /**
+   * Remember a choice made while watching for the video's season, show or channel (playbackScopes).
+   * It also becomes the starting point for places without their own choice yet.
+   */
+  trackPrefs(scopes: string[], update: TrackPrefs) {
+    set((s) => {
+      const { subtitleStyle, ...langs } = update;
+      const map = { ...s.scoped };
+      for (const scope of scopes) {
+        const prev = map[scope];
+        // Re-insert so key order tracks recency.
+        delete map[scope];
+        map[scope] = { ...prev, ...update };
+      }
+      const keys = Object.keys(map);
+      if (keys.length > MAX_SCOPES) for (const key of keys.slice(0, keys.length - MAX_SCOPES)) delete map[key];
+      return {
+        ...s,
+        scoped: map,
+        languages: Object.keys(langs).length ? { ...s.languages, ...langs } : s.languages,
+        settings: subtitleStyle ? { ...s.settings, subtitleStyle } : s.settings,
+      };
+    });
   },
   /** Reset history, positions, searches, Watch later and preferences for the account. */
   reset() {
     set(() => defaults);
   },
 };
+
+/** Track choices for a video, from its scopes (see playbackScopes). Stable while nothing changes. */
+export function useTrackPrefs(scopes: string[]) {
+  const key = scopes.join("|");
+  const audio = useStore((s) => trackPrefs(s, key.split("|")).audio);
+  const subtitles = useStore((s) => trackPrefs(s, key.split("|")).subtitles);
+  const subtitleStyle = useStore((s) => trackPrefs(s, key.split("|")).subtitleStyle);
+  return { audio, subtitles, subtitleStyle };
+}
 
 /** Saved position for an item key. */
 export const useProgress = (key: string) => useStore((s) => s.progress[key]);

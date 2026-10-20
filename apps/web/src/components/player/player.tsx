@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Link, useNavigate } from "react-router";
 import JASSUB from "jassub";
 import { toast } from "sonner";
@@ -41,7 +41,8 @@ import { segmentMeta } from "@/lib/segments";
 import { itemKey, paths } from "@/lib/paths";
 import { backendName, useAccounts, useProfile } from "@/lib/session";
 import { useSource } from "@/lib/source";
-import { actions, getLocalState, useSettings, useStore, type Settings } from "@/lib/store";
+import { actions, getLocalState, playbackScopes, trackPrefs, useSettings, useTrackPrefs, type Settings } from "@/lib/store";
+import type { SubtitleStyle } from "@/lib/subtitle-style";
 import type { Segment, Stream, Subtitle, Video } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { effectiveQuality } from "@/lib/quality";
@@ -146,15 +147,18 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const [resumeAt] = useState(() => startAt ?? getLocalState().progress[key] ?? video.progress ?? 0);
   // ASS and native VTT subtitles, episode dubs and in-stream audio languages.
   const subtitles = stream.subtitles ?? noSubtitles;
-  const savedLanguages = useStore((s) => s.languages);
-  const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, savedLanguages?.subtitles, video.episode?.audio, settings.captions, navigator.languages));
+  // Choices are remembered per season, show or channel (playbackScopes in store.ts).
+  const scopeKey = playbackScopes(video).join("|");
+  const scopes = useMemo(() => scopeKey.split("|"), [scopeKey]);
+  const prefs = useTrackPrefs(scopes);
+  const [subtitle, setSubtitle] = useState(() => initialSubtitle(subtitles, prefs.subtitles, video.episode?.audio, settings.captions, navigator.languages));
   const versions = video.episode?.versions ?? [];
   const chooseSubtitle = useCallback((id: string) => {
     setSubtitle(id);
-    actions.languages({ subtitles: subtitles.find((t) => subtitleKey(t) === id)?.locale ?? "" });
-  }, [subtitles]);
+    actions.trackPrefs(scopes, { subtitles: subtitles.find((t) => subtitleKey(t) === id)?.locale ?? "" });
+  }, [subtitles, scopes]);
   useEffect(() => {
-    setSubtitle(initialSubtitle(subtitles, getLocalState().languages?.subtitles, video.episode?.audio, settings.captions, navigator.languages));
+    setSubtitle(initialSubtitle(subtitles, trackPrefs(getLocalState(), scopes).subtitles, video.episode?.audio, settings.captions, navigator.languages));
     // Reset only for a new subtitle list/default, not when persisting a manual/ASR choice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subtitles, settings.captions, video.episode?.audio]);
@@ -163,17 +167,17 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
   const chooseStreamAudio = useCallback((key: string) => {
     const option = streamAudio.find((o) => o.key === key);
     if (!option || !dash.current) return;
-    if (option.language) actions.languages({ audio: option.language });
+    if (option.language) actions.trackPrefs(scopes, { audio: option.language });
     // dash.js switches the adaptation in-place: no seek, navigation, or play call.
     dash.current.setCurrentTrack(option.track);
-  }, [streamAudio]);
+  }, [streamAudio, scopes]);
   const switchAudio = useCallback(
     (id: string, audio: string) => {
-      actions.languages({ audio });
+      actions.trackPrefs(scopes, { audio });
       // Each dub is its own episode id: carry on from the same moment.
       navigate(paths.watch({ backend: video.backend, id }, media.current?.currentTime), { replace: true, state: { samePage: true } });
     },
-    [navigate, video.backend],
+    [navigate, video.backend, scopes],
   );
   const [heights, setHeights] = useState<number[]>([]);
   const [playingHeight, setPlayingHeight] = useState<number | null>(null);
@@ -312,7 +316,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       player.on("streamInitialized", async () => {
         const options = audioOptions(player.getTracksFor("audio"));
         const currentAudio = player.getCurrentTrackFor("audio");
-        const audio = preferredAudio(options, versions.length > 1 ? undefined : getLocalState().languages?.audio, currentAudio ? audioKey(currentAudio) : undefined);
+        const audio = preferredAudio(options, versions.length > 1 ? undefined : trackPrefs(getLocalState(), scopes).audio, currentAudio ? audioKey(currentAudio) : undefined);
         if (audio && (!currentAudio || audioKey(currentAudio) !== audio.key)) player.setCurrentTrack(audio.track);
         syncAudio();
         // One video track per codec: pick the first the device decodes efficiently.
@@ -416,7 +420,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
 
   // "Use for styled subtitles": rewrite the script's styles in the viewer's style; switching it
   // off puts the script's own back.
-  const subtitleStyle = settings.subtitleStyle;
+  const subtitleStyle = prefs.subtitleStyle;
+  const setSubtitleStyle = useCallback((style: SubtitleStyle) => actions.trackPrefs(scopes, { subtitleStyle: style }), [scopes]);
   useEffect(() => {
     const renderer = assRenderer.current;
     if (!renderer || !assStyles) return;
@@ -650,7 +655,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
           chooseSubtitle(
             subtitle
               ? ""
-              : initialSubtitle(subtitles, savedLanguages?.subtitles || undefined, undefined, true, navigator.languages) || subtitleKey(subtitles[0]!),
+              : initialSubtitle(subtitles, prefs.subtitles || undefined, undefined, true, navigator.languages) || subtitleKey(subtitles[0]!),
           );
           flash(Captions, subtitle ? "Off" : "On");
           break;
@@ -658,9 +663,9 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         case "=":
         case "-": {
           // Caption size, like YouTube.
-          const style = getLocalState().settings.subtitleStyle;
+          const style = trackPrefs(getLocalState(), scopes).subtitleStyle;
           const size = Math.min(2.5, Math.max(0.5, Math.round((style.size + (key === "-" ? -0.1 : 0.1)) * 10) / 10));
-          actions.setting("subtitleStyle", { ...style, size });
+          actions.trackPrefs(scopes, { subtitleStyle: { ...style, size } });
           flash(Captions, `${Math.round(size * 100)}%`);
           break;
         }
@@ -790,7 +795,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
             if (!segmentMuted) setMuted(e.currentTarget.muted);
           }}
         />
-        {vttTrack && <SubtitleOverlay track={vttTrack} style={settings.subtitleStyle} lifted={chrome} />}
+        {vttTrack && <SubtitleOverlay track={vttTrack} style={subtitleStyle} lifted={chrome} />}
 
         {/* No playable stream (live) or a playback failure. */}
         {(failure || (!stream.dash && !stream.progressive)) && (
@@ -1029,6 +1034,8 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
                     view={menu}
                     onView={setMenu}
                     settings={settings}
+                    subtitleStyle={subtitleStyle}
+                    onSubtitleStyle={setSubtitleStyle}
                     loop={loop}
                     onLoop={setLoop}
                     onSpeed={setSpeed}
@@ -1112,6 +1119,8 @@ function SettingsPanel({
   view,
   onView,
   settings,
+  subtitleStyle,
+  onSubtitleStyle,
   loop,
   onLoop,
   onSpeed,
@@ -1130,6 +1139,8 @@ function SettingsPanel({
   view: MenuView;
   onView: (view: null | MenuView) => void;
   settings: Settings;
+  subtitleStyle: SubtitleStyle;
+  onSubtitleStyle: (style: SubtitleStyle) => void;
   loop: boolean;
   onLoop: (loop: boolean) => void;
   onSpeed: (speed: number) => void;
@@ -1258,7 +1269,7 @@ function SettingsPanel({
             <ChevronLeft className="size-4" /> Subtitle style
           </button>
           <div className="my-1 h-px bg-white/10" />
-          <SubtitleStyleMenu style={settings.subtitleStyle} />
+          <SubtitleStyleMenu style={subtitleStyle} onChange={onSubtitleStyle} />
         </>
       )}
       {view === "audio" && (

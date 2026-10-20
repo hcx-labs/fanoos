@@ -2,7 +2,6 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { actions } from "@/lib/store";
 import {
   defaultSubtitleStyle,
   subtitleBackgrounds,
@@ -72,8 +71,8 @@ export function SubtitleOverlay({ track, style, lifted }: { track: TextTrack | n
 }
 
 /** The player menu's "Subtitle style" page: live preview and every option. */
-export function SubtitleStyleMenu({ style }: { style: SubtitleStyle }) {
-  const set = (patch: Partial<SubtitleStyle>) => actions.setting("subtitleStyle", { ...style, ...patch });
+export function SubtitleStyleMenu({ style, onChange }: { style: SubtitleStyle; onChange: (style: SubtitleStyle) => void }) {
+  const set = (patch: Partial<SubtitleStyle>) => onChange({ ...style, ...patch });
   const chip = (active: boolean) =>
     cn("rounded-md px-2 py-1 text-xs font-medium hover:bg-white/10", active && "bg-white text-black hover:bg-white");
   return (
@@ -201,7 +200,7 @@ export function SubtitleStyleMenu({ style }: { style: SubtitleStyle }) {
       <button
         type="button"
         className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs text-white/70 hover:bg-white/10 hover:text-white"
-        onClick={() => actions.setting("subtitleStyle", { ...defaultSubtitleStyle, overrideStyled: style.overrideStyled })}
+        onClick={() => onChange({ ...defaultSubtitleStyle, overrideStyled: style.overrideStyled })}
       >
         <RotateCcw className="size-3.5" /> Reset to default
       </button>

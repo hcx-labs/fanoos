@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   AudioLines,
@@ -39,7 +39,7 @@ import { itemKey, paths } from "@/lib/paths";
 import { languageLabel } from "@/components/player/player";
 import { useSource, type CommentSort, type Rating } from "@/lib/source";
 import { accountActions, useAccounts } from "@/lib/session";
-import { actions, useSettings, useStore } from "@/lib/store";
+import { actions, getLocalState, playbackScopes, scopedAudio, useSettings, useStore } from "@/lib/store";
 import type { Chapter, Channel, Comment, Segment, Video, VideoDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useTitle } from "@/hooks/use-title";
@@ -71,6 +71,16 @@ export function WatchPage() {
   const sameEpisode =
     shown.current?.video.backend === backend && (shown.current.video.id === id || shown.current.video.episode?.versions?.some((v) => v.id === id));
   const detail = state.data ?? (state.status === "loading" && sameEpisode ? shown.current : null);
+  // Each dub is its own id: open the one chosen for this season or show, before anything plays.
+  const navigate = useNavigate();
+  const dubbed = useRef(new Set<string>());
+  const dub = detail && !dubbed.current.has(detail.video.id) ? rememberedDub(detail.video) : undefined;
+  useEffect(() => {
+    if (!dub || !detail) return;
+    // Once per id, so a service answering with another language can't bounce back and forth.
+    dubbed.current.add(detail.video.id);
+    navigate(paths.watch({ backend: detail.video.backend, id: dub }, startAt), { replace: true, state: { samePage: true } });
+  }, [dub, detail, navigate, startAt]);
   // The streaming service is warming up: check again shortly, without leaving the page.
   // About two minutes of retries; past that it isn't warming up any more, so stop and say so.
   const starting = detail?.stream.unavailable?.code === "starting" && attempt < 20;
@@ -80,7 +90,9 @@ export function WatchPage() {
     return () => window.clearTimeout(timer);
   }, [starting, attempt]);
 
-  if (!detail && state.status === "loading") return <WatchSkeleton />;
+  // Until the chosen dub has loaded, the version shown is the one being left.
+  const redirecting = Boolean(dub) || (detail ? dubbed.current.has(detail.video.id) && detail.video.id !== id : false);
+  if ((!detail && state.status === "loading") || redirecting) return <WatchSkeleton />;
   if (!detail)
     return (
       <Empty className="mt-24">
@@ -360,6 +372,14 @@ function VideoInfo({ video, channel, onSeek }: { video: Video; channel: Channel;
   );
 }
 
+/** The id of this episode's version in the audio language chosen for its season or show, when it isn't this one. */
+function rememberedDub(video: Video): string | undefined {
+  const versions = video.episode?.versions ?? [];
+  const audio = versions.length > 1 ? scopedAudio(getLocalState(), playbackScopes(video)) : undefined;
+  if (!audio || audio.toLowerCase() === video.episode?.audio?.toLowerCase()) return undefined;
+  return versions.find((v) => v.audio.toLowerCase() === audio.toLowerCase())?.id;
+}
+
 /** Other languages of this episode (each dub is its own id), as quick switches. */
 function AudioVersions({ video }: { video: Video }) {
   const versions = [...(video.episode?.versions ?? [])].sort(
@@ -382,7 +402,7 @@ function AudioVersions({ video }: { video: Video }) {
             to={paths.watch({ backend: video.backend, id: v.id })}
             replace
             state={{ samePage: true }}
-            onClick={() => actions.languages({ audio: v.audio })}
+            onClick={() => actions.trackPrefs(playbackScopes(video), { audio: v.audio })}
             className="bg-secondary hover:bg-accent rounded-full px-3 py-1 text-xs font-medium"
           >
             {languageLabel(v.audio)}
