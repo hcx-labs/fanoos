@@ -223,7 +223,7 @@ export type Stream = {
   sources?: PlaybackSource[];
   defaultSource?: string;
   originalAudio?: { label: string; codec: string; mimeType?: string };
-  audioTracks?: { id: string; label: string; locale: string; selected?: boolean; sources: PlaybackSource[] }[];
+  audioTracks?: { id: string; label: string; locale: string; selected?: boolean; mode?: "original" | "transcode"; codec?: string; mimeType?: string; sources: PlaybackSource[] }[];
   /** DASH manifest URL (adaptive, all qualities). */
   dash?: string;
   /** Encrypted streams: licence server URLs per DRM system, called by the browser's own CDM. */

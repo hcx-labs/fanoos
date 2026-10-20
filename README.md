@@ -155,6 +155,9 @@ credentials; the authorization can also be revoked in Plex's Authorized Devices.
 - Signed media URLs proxy artwork, file byte ranges, DASH manifests/segments, and
   text subtitles through Fanoos. Plex credentials and private server URLs stay on
   the backend. Intro/credit markers and chapters use the existing player controls.
+- Alternate original audio tracks use a Plex remux with both video and audio
+  copied unchanged. The media decision is checked before playback; conversion
+  requires the separate Transcode choice. The file-default track remains direct play.
 - Plex Home managed-user switching, music, live TV and Plex's free streaming catalog
   are outside this integration. Image-based subtitles use Plex burn-in.
 - Plex feed curation, date groups and newest-first browsing use release dates,

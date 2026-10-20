@@ -8,7 +8,7 @@ process.env.DATA_DIR = directory; process.env.BACKEND_TOKEN = "test-backend-secr
 const A = "a".repeat(40), B = "b".repeat(40);
 const requests: { url: URL; headers: Headers; method: string }[] = [];
 const realFetch = globalThis.fetch;
-let linked = false; let resourceFailure = false;
+let linked = false; let resourceFailure = false; let currentAudio = 8; let canCopy = true;
 const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, originallyAvailableAt: "2001-12-19", year: 2001, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", Stream: [] }] }] };
 const show = { ratingKey: "1", type: "show", title: "Test Show", leafCount: 1, thumb: "/library/metadata/1/thumb/1" };
 const season = { ratingKey: "2", type: "season", title: "Season 1", parentRatingKey: "1", leafCount: 1 };
@@ -32,16 +32,17 @@ globalThis.fetch = async (input, init) => {
  if (url.pathname === "/library/metadata/1") return container({ Metadata: [show] });
  if (url.pathname === "/library/metadata/1/children") return container({ Metadata: [season] });
  if (url.pathname === "/library/metadata/2/children") return container({ Metadata: [episode] });
- if (url.pathname === "/library/metadata/3") return container({ Metadata: [episode] });
+ if (url.pathname === "/library/metadata/3") return container({ Metadata: [{ ...episode, Media: episode.Media.map((m) => ({ ...m, Part: m.Part.map((p) => ({ ...p, Stream: p.Stream.map((s) => s.streamType === 2 ? { ...s, selected: s.id === currentAudio } : s) })) })) }] });
  if (url.pathname === "/library/metadata/4") return container({ Metadata: [movie], librarySectionID: 10 });
  if (url.pathname === "/library/onDeck") return container({ Metadata: [episode] });
  if (url.pathname === "/hubs/search") return container({ Hub: [{ Metadata: [show, episode, movie] }] });
+ if (url.pathname === "/video/:/transcode/universal/decision") return container({ Metadata: [{ Media: [{ Part: [{ id: 33, Stream: [{ id: 12, streamType: 1, decision: canCopy ? "copy" : "transcode" }, { id: currentAudio, streamType: 2, decision: "copy", selected: true }] }] }] }] });
  if (url.pathname === "/video/:/transcode/universal/start.mpd") {
   const sid = url.searchParams.get("session");
   return new Response(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><BaseURL>/video/:/transcode/universal/session/${sid}/dash/?X-Plex-Token=must-not-leak</BaseURL><Period><AdaptationSet><Representation id="0"><SegmentTemplate initialization="init.mp4" media="chunk-$Number$.m4s" /></Representation></AdaptationSet></Period></MPD>`, { headers: { "content-type": "application/dash+xml" } });
  }
  if (url.pathname.includes("/chunk-1.m4s")) return new Response("segment", { headers: { "content-type": "video/mp4" } });
- if (url.pathname === "/library/parts/33" && init?.method === "PUT") return new Response(null, { status: 200 });
+ if (url.pathname === "/library/parts/33" && init?.method === "PUT") { if (url.searchParams.has("audioStreamID")) currentAudio = Number(url.searchParams.get("audioStreamID")); return new Response(null, { status: 200 }); }
  if (url.pathname === "/library/parts/44/file.mp4") return new Response("part", { status: 206, headers: { "content-range": "bytes 0-3/4", "content-type": "video/mp4" } });
  if (url.pathname === "/library/streams/10") return new Response("WEBVTT\n\n00:00.000 --> 00:03.000\nHello Fanoos\n", { headers: { "content-type": "text/vtt" } });
  if (url.pathname === "/:/timeline" || url.pathname.endsWith("/ping") || url.pathname.endsWith("/stop")) return new Response(null, { status: 200 });
@@ -159,11 +160,46 @@ test("Plex provider contract", async (t) => {
   assert.match(detail.stream.subtitles[0].url, /^\/public\/text-subtitle\//);
   assert.match(detail.stream.subtitles[1].url, /^\/public\/text-subtitle\//);
   assert.equal((await service.app.request(detail.stream.subtitles[0].url + "tampered")).status, 403);
-  assert.deepEqual(detail.stream.audioTracks.map((track: { label: string }) => track.label), ["Japanese", "English"]);
-  const track = detail.stream.audioTracks[1];
+  assert.deepEqual(detail.stream.audioTracks.filter((track: { mode: string }) => track.mode === "transcode").map((track: { label: string }) => track.label), ["Japanese", "English"]);
+  const track = detail.stream.audioTracks.find((track: { id: string }) => track.id === "9");
   assert.ok(track.sources.every((source: { stream: { dash?: string; progressive?: string } }) => source.stream.dash && !source.stream.progressive));
   assert.equal((await service.app.request(track.sources[0].stream.dash)).status, 200);
   assert.equal(requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))?.url.searchParams.get("audioStreamID"), "9");
+ });
+ await t.test("progressive original audio follows the file default rather than the Plex account selection", async () => {
+  currentAudio = 9;
+  try {
+   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
+   assert.equal(detail.stream.originalAudio.label, "Japanese");
+   assert.ok(detail.stream.audioTracks.some((track: { id: string }) => track.id === "original-9"));
+  } finally { currentAudio = 8; }
+ });
+ await t.test("original language switching copies video and audio and restores the previous selection", async () => {
+  currentAudio = 8;
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
+  const track = detail.stream.audioTracks.find((track: { id: string }) => track.id === "original-9");
+  assert.equal(track.mode, "original"); assert.equal(track.sources[0].kind, "original");
+  const result = await service.app.request(track.sources[0].stream.dash);
+  assert.equal(result.status, 200); assert.equal(currentAudio, 8);
+  const start = requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))!.url;
+  assert.equal(start.searchParams.get("directStream"), "1");
+  assert.equal(start.searchParams.get("directStreamAudio"), "1");
+  assert.equal(start.searchParams.get("audioChannelCount"), null);
+  assert.equal(start.searchParams.get("audioCodec"), "dca");
+  assert.equal(start.searchParams.get("videoCodec"), "hevc");
+  assert.equal(start.searchParams.get("X-Plex-Client-Profile-Name"), "Generic");
+ });
+ await t.test("original audio refuses silent conversion and restores preferences if copy is unavailable", async () => {
+  currentAudio = 8; canCopy = false;
+  const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();
+  const track = detail.stream.audioTracks.find((track: { id: string }) => track.id === "original-9");
+  const starts = () => requests.filter((r) => r.url.pathname.endsWith("start.mpd")).length;
+  const before = starts();
+  try {
+   const result = await service.app.request(track.sources[0].stream.dash);
+   assert.equal(result.status, 502); assert.match((await result.json()).error, /Choose Transcode/);
+   assert.equal(starts(), before); assert.equal(currentAudio, 8);
+  } finally { canCopy = true; }
  });
  await t.test("prepares text subtitles asynchronously and reuses the shared cache", async () => {
   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json();

@@ -141,7 +141,8 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
     stream = { ...stream, dash: selected(stream.dash), session: stream.session ? { ...stream.session, keepAlive: selected(stream.session.keepAlive), release: selected(stream.session.release) } : undefined };
   }
   const originalAudio = inputStream.originalAudio;
-  const unsupportedAudio = !providerAudio && originalAudio && (!originalAudio.mimeType || !document.createElement("audio").canPlayType(originalAudio.mimeType));
+  const checkedAudio = providerTrack?.mode === "original" ? providerTrack : !providerAudio ? originalAudio : undefined;
+  const unsupportedAudio = checkedAudio && (!checkedAudio.mimeType || !document.createElement("audio").canPlayType(checkedAudio.mimeType));
   const owner = useProfile()?.owner ?? false;
   const shell = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLVideoElement>(null);
@@ -857,7 +858,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
             if (!segmentMuted) setMuted(e.currentTarget.muted);
           }}
         />
-        {unsupportedAudio && <div role="status" className="absolute inset-x-3 top-3 z-20 flex items-center justify-between gap-3 rounded-lg bg-black/80 px-3 py-2 text-xs text-white"><span>This browser may not support {originalAudio.codec.toUpperCase()} audio. Choose Transcode in Audio to hear it.</span><button type="button" className="shrink-0 font-semibold underline" onClick={() => setMenu("audio")}>Audio settings</button></div>}
+        {unsupportedAudio && <div role="status" className="absolute inset-x-3 top-3 z-20 flex items-center justify-between gap-3 rounded-lg bg-black/80 px-3 py-2 text-xs text-white"><span>This browser may not support {checkedAudio?.codec?.toUpperCase() || "this"} audio. Choose Transcode in Audio to hear it.</span><button type="button" className="shrink-0 font-semibold underline" onClick={() => setMenu("audio")}>Audio settings</button></div>}
         {vttTrack && <SubtitleOverlay track={vttTrack} style={subtitleStyle} lifted={chrome} />}
 
         {/* No playable stream (live) or a playback failure. */}
@@ -1093,11 +1094,11 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
                     audio={video.episode?.audio}
                     onAudio={switchAudio}
                     sources={playbackSources}
-                    audioOutput={providerAudio && stream.dash ? "AAC stereo" : undefined}
+                    audioOutput={providerTrack && providerTrack.mode !== "original" && stream.dash ? "AAC stereo" : undefined}
                     providerTracks={providerTracks}
                     providerAudio={providerAudio}
                     originalAudioLabel={originalAudio?.label}
-                    onProviderAudio={(id) => { setProviderAudio(id); setSelectedSource(id ? "transcode-auto" : "original"); }}
+                    onProviderAudio={(id) => { setProviderAudio(id); setSelectedSource(id && providerTracks.find((track) => track.id === id)?.mode !== "original" ? "transcode-auto" : "original"); }}
                     selectedSource={currentSource?.id}
                     onSource={setSelectedSource}
                     heights={heights}
@@ -1363,7 +1364,7 @@ function SettingsPanel({
           </button>
           <div className="my-1 h-px bg-white/10" />
           {originalAudioLabel && <button type="button" role="menuitemradio" aria-checked={!providerAudio} className={row} onClick={() => onProviderAudio("")}><Check className={cn("size-4", !providerAudio ? "text-brand" : "opacity-0")} />Original · {originalAudioLabel}</button>}
-          {providerTracks.map((track) => <button key={track.id} type="button" role="menuitemradio" aria-checked={providerAudio === track.id} className={row} onClick={() => onProviderAudio(track.id)}><Check className={cn("size-4", providerAudio === track.id ? "text-brand" : "opacity-0")} />Transcode · {track.label}{audioOutput && <span className="ml-auto text-xs text-white/50">{audioOutput}</span>}</button>)}
+          {providerTracks.map((track) => <button key={track.id} type="button" role="menuitemradio" aria-checked={providerAudio === track.id} className={row} onClick={() => onProviderAudio(track.id)}><Check className={cn("size-4", providerAudio === track.id ? "text-brand" : "opacity-0")} />{track.mode === "original" ? "Original" : "Transcode"} · {track.label}{track.id === providerAudio && audioOutput && <span className="ml-auto text-xs text-white/50">{audioOutput}</span>}</button>)}
           {(providerTracks.length ? [] : streamAudio).map((option) => (
             <button key={option.key} type="button" role="menuitemradio" aria-checked={activeAudio === option.key} className={row} onClick={() => activeAudio !== option.key && onStreamAudio(option.key)}>
               <Check className={cn("size-4", activeAudio === option.key ? "text-brand" : "opacity-0")} />

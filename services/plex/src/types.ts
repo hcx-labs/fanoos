@@ -1,4 +1,4 @@
-export type PlexStream = { id: number; index?: number; streamType: number; codec?: string; language?: string; languageCode?: string; displayTitle?: string; key?: string; selected?: boolean };
+export type PlexStream = { id: number; index?: number; streamType: number; codec?: string; language?: string; languageCode?: string; displayTitle?: string; key?: string; selected?: boolean; default?: boolean; decision?: string };
 export type PlexPart = { id: number; key: string; size?: number; container?: string; Stream?: PlexStream[] };
 export type PlexItem = {
  ratingKey: string; key?: string; type: string; title: string; summary?: string; thumb?: string; art?: string;

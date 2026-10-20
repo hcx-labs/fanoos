@@ -97,6 +97,14 @@ console.log('PASS: Plex Original/transcode labels, bitrate details and source se
 assert.ok(await evaluate(`document.querySelector('[role="status"]')?.textContent.includes('EAC3')`));
 await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b.textContent.trim().startsWith('Audio')).click()`);
 await wait(`document.querySelector('[role="menu"]').textContent.includes('Japanese')`);
+assert.ok(await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].some(b=>b.textContent.includes('Original · English (AAC Stereo)'))`));
+await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('Original · English (AAC Stereo)')).click()`);
+assert.equal(await evaluate(`!!document.querySelector('[role="status"]')`),false);
+assert.ok(await evaluate(`document.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent.includes('Original · English (AAC Stereo)')`));
+await evaluate(`document.querySelector('[role="menu"] button').click()`);
+assert.ok(await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b.textContent.includes('Quality')).textContent.includes('Original · 1080p')`));
+await evaluate(`[...document.querySelectorAll('[role="menu"] button')].find(b=>b.textContent.trim().startsWith('Audio')).click()`);
+
 await evaluate(`[...document.querySelectorAll('[role="menuitemradio"]')].find(b=>b.textContent.includes('Japanese')).click()`);
 assert.ok(await evaluate(`document.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent.includes('Transcode · Japanese')`));
 assert.equal(await evaluate(`!!document.querySelector('[role="status"]')`),false);
