@@ -87,3 +87,36 @@ local stack are not stopped. Ports :5195 and :9334 must be free. Override
 
 `FANOOS_DESKTOP_DATA_DIR` isolates desktop state for development/testing; normal launches
 use Electron's standard user-data location.
+
+### Production Widevine / EVS
+
+The runtime installs and updates Google's Widevine CDM with castLabs Components.
+YouTube and offline playback remain available while installation runs. Protected
+playback waits for CDM readiness before creating an EME session or loading DASH.
+
+On macOS and Windows, the stock ECS certificate is development-only. Crunchyroll
+production playback needs an EVS streaming signature as well as a valid account.
+Set up the free EVS account locally (never put credentials in source control):
+
+```sh
+python3 -m venv apps/desktop/.venv-evs
+apps/desktop/.venv-evs/bin/python -m pip install castlabs-evs
+apps/desktop/.venv-evs/bin/python -m castlabs_evs.account signup
+# For an existing account, use `reauth` instead of `signup`.
+npm run pack:drm --workspace @fanoos/desktop -- --mac --arm64
+```
+
+On Windows use `.venv-evs/Scripts/python.exe`. `EVS_PYTHON` can point to another
+Python installation containing the EVS client. The client stores credentials in
+its own configuration, outside the app. Production builds run non-interactively
+and fail if signing or verification fails; authenticate before building.
+
+`pack:drm` and `dist` automatically VMP-sign and verify packages. macOS signs VMP
+in afterPack, before Apple signing; Windows uses afterSign, after Authenticode.
+Linux needs no VMP signature. The normal `pack` command remains available for
+local development and explicitly reports that production DRM signing is skipped.
+Do not use `--persistent`: current ECS no longer supports persistent DRM licenses.
+YouTube file downloads do not require persistent DRM licensing.
+
+After signing, validate a Crunchyroll episode with the local connected account:
+CDM availability alone does not prove production licensing or decryption succeeds.

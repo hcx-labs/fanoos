@@ -10,6 +10,11 @@ const { pathToFileURL } = require('node:url');
 protocol.registerSchemesAsPrivileged([{ scheme: 'fanoos-offline', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 const offlineURL = 'fanoos-offline://app/offline.html';
 let downloads;
+let widevineReady;
+function ensureWidevine() {
+  if (!widevineReady) widevineReady = components.whenReady([components.WIDEVINE_CDM_ID]).catch((error) => { widevineReady = null; throw new Error(`Widevine could not initialize: ${error.message}. Check your connection and restart Fanoos.`); });
+  return widevineReady;
+}
 let win;
 let navigation = 0;
 let config = {};
@@ -76,6 +81,10 @@ function createWindow() {
 }
 ipcMain.on('desktop:origin', (event) => {
   event.returnValue = trusted(event) && isServer(event.senderFrame.url) ? config.server : '';
+});
+ipcMain.handle('desktop:widevine', async (event) => {
+  if (!trusted(event) || !isServer(event.senderFrame.url)) throw new Error('Unavailable');
+  await ensureWidevine();
 });
 ipcMain.handle('desktop:server', async (event, value) => {
   if (!trusted(event) || event.senderFrame.url !== setupURL) throw new Error('Unavailable');
@@ -156,7 +165,7 @@ app.whenReady().then(async () => {
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]));
   // YouTube and the offline library must remain usable without a CDM download.
-  void components.whenReady().catch((error) => console.warn('Widevine unavailable:', error.message));
+  void ensureWidevine().catch((error) => console.warn('Widevine unavailable:', error.message));
   createWindow();
   app.on('activate', () => { if (!win) createWindow(); });
 }).catch((error) => { dialog.showErrorBox('Fanoos could not start', error.message); app.quit(); });

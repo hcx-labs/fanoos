@@ -36,6 +36,9 @@ async function launch(){
 async function stop(){ws?.close();if(proc?.exitCode===null){proc.kill('SIGTERM');await Promise.race([once(proc,'exit'),pause(5000)])}}
 try{
   await launch();await wait(`!!window.fanoosDesktop?.downloads`);
+  if (process.env.FANOOS_E2E_WIDEVINE === '1') {
+    check(await evaluate(`(async()=>{await window.fanoosDesktop.readyForProtectedPlayback();const access=await navigator.requestMediaKeySystemAccess('com.widevine.alpha',[{initDataTypes:['cenc'],videoCapabilities:[{contentType:'video/mp4; codecs="avc1.640028"'}]}]);const keys=await access.createMediaKeys();return !!keys})()`),'desktop CDM readiness bridge supports a real Widevine MediaKeys instance');
+  }
   const email=`offline-e2e-${Date.now()}@example.test`;
   const status=await evaluate(`(async()=>{const r=await fetch('/api/auth/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Offline Test',email:${JSON.stringify(email)},password:crypto.randomUUID()})});return r.status})()`);
   check(status===200,'registered isolated test profile');

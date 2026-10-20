@@ -11,9 +11,11 @@
     "build:offline": "npm run build:offline --workspace @tube/web",
     "prepack": "npm run build:offline",
     "predist": "npm run build:offline",
-    "test": "node --test downloads.test.cjs",
+    "test": "node --test downloads.test.cjs scripts/evs-sign.test.cjs",
     "predev": "npm run build:offline",
-    "test:e2e": "node scripts/test-offline.mjs"
+    "test:e2e": "node scripts/test-offline.mjs",
+    "pack:drm": "node scripts/package-drm.cjs",
+    "prepack:drm": "npm run build:offline"
   },
   "devDependencies": {
     "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
@@ -50,7 +52,9 @@
       ],
       "category": "AudioVideo"
     },
-    "electronVersion": "44.1.0+wvcus"
+    "electronVersion": "44.1.0+wvcus",
+    "afterPack": "scripts/evs-after-pack.cjs",
+    "afterSign": "scripts/evs-after-sign.cjs"
   },
   "license": "AGPL-3.0-or-later",
   "description": "Fanoos desktop client"

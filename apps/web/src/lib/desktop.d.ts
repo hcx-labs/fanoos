@@ -20,6 +20,7 @@ declare global {
   interface Window {
     fanoosDesktop?: {
       readonly platform: string;
+      readyForProtectedPlayback(): Promise<void>;
       readonly offline?: boolean;
       readonly downloads?: DesktopDownloads;
       setTheme(theme: 'dark' | 'light' | 'system'): void;

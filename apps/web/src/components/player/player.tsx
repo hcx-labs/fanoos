@@ -256,14 +256,6 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
     if (media.current) media.current.volume = volume;
   }, [volume]);
 
-  // Protected streams need a CDM; say so up front instead of failing mid-load.
-  useEffect(() => {
-    if (!stream.drm?.widevine || !navigator.requestMediaKeySystemAccess) return;
-    navigator
-      .requestMediaKeySystemAccess("com.widevine.alpha", [{ initDataTypes: ["cenc"], videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }] }])
-      .catch(() => setFailure(drmMessage));
-  }, [stream.drm?.widevine]);
-
   // Where to pick up when the stream is swapped under a mounted player (another audio language).
   const handoff = useRef<{ from: string; time: number; playing: boolean } | null>(null);
 
@@ -338,7 +330,7 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
         // dash.js protection errors (100–115): no usable CDM, or the licence was refused.
         setFailure(
           code >= 100 && code < 120
-            ? drmMessage
+            ? window.fanoosDesktop ? "Protected playback failed. Restart Fanoos and check that your Crunchyroll account can play this episode." : drmMessage
             : /not available|404|403|manifest/i.test(e.error?.message ?? "")
               ? "The stream couldn't be loaded. It may have expired; try again."
               : "Something went wrong while playing this video.",
@@ -346,7 +338,19 @@ export function Player({ video, stream, startAt, next, theater, onTheaterChange,
       });
       // Fallback: if the stream came up without the start position, put it there before playing.
       el.addEventListener("loadedmetadata", place, { once: true });
-      player.initialize(el, stream.dash, resume?.playing ?? false, start || undefined);
+      const initialize = async () => {
+        if (stream.drm?.widevine) {
+          await window.fanoosDesktop?.readyForProtectedPlayback?.();
+          if (disposed) return;
+          if (!navigator.requestMediaKeySystemAccess) throw new Error(drmMessage);
+          await navigator.requestMediaKeySystemAccess("com.widevine.alpha", [{ initDataTypes: ["cenc"], videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }] }]);
+          if (disposed) return;
+        }
+        player.initialize(el, stream.dash, resume?.playing ?? false, start || undefined);
+      };
+      void initialize().catch((error: Error) => {
+        if (!disposed) setFailure(window.fanoosDesktop ? `Protected playback could not start. ${error.message}` : drmMessage);
+      });
       dash.current = player;
       // Development aid: inspect playback from the browser console.
       if (import.meta.env.DEV) Object.assign(window, { __dash: player });
