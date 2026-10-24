@@ -44,12 +44,18 @@ function conversions(ref: string, server: Server, item: PlexItem, height: number
   const audio = { id: String(s.id), label: s.displayTitle || s.language || "Audio", locale: s.languageTag || s.languageCode || "und", default: s === fallback };
   return (playback(ref, server, item, s.id).sources ?? []).filter((source) => source.stream.dash).map((source) => {
    const copy = source.id === "transcode-auto";
+   // Playback's Auto lets Plex convert to H.264. Downloads keep the file's video as it is (HEVC
+   // included) and convert only the audio; the app checks the device decodes it. The bitrate
+   // ceiling is far above any file: an average-bitrate cap is below the video's peaks, and Plex
+   // re-encodes video that might exceed it.
+   const codec = media.videoCodec || "h264";
+   const ticket = copy ? seal({ ref, server: server.id, session: randomUUID(), key: item.ratingKey, height, bitrate: 200_000, audio: s.id, part: part.id, subtitles: [], copyVideo: true, nativeVideoCodec: codec }, ttl) : undefined;
    return {
     id: `${s.id}:${source.id}`, audio,
-    quality: { id: source.id, label: copy ? `Original · ${height}p` : source.label, height: source.height, copy },
+    quality: { id: source.id, label: copy ? `Original · ${height}p` : source.label, height: source.height, copy, codec: copy ? codec : "h264" },
     // Original video keeps the file's bitrate; conversions target theirs. AAC stereo adds about 160 kbps.
     bitrate: (copy ? (media.bitrate ?? 8000) * 1000 : source.bitrate ?? 8_000_000) + 160_000,
-    manifest: source.stream.dash!, release: source.stream.session?.release,
+    manifest: ticket ? `/public/play/${ticket}/manifest.mpd` : source.stream.dash!, release: ticket ? `/public/play/${ticket}/release` : source.stream.session?.release,
    };
   });
  });
@@ -99,8 +105,9 @@ function read(token: string): Ticket {
 function startPath(ticket: Ticket): string {
  const videoCodec = ticket.nativeVideoCodec || "h264";
  const videoCodecs = [...new Set([videoCodec, "h264"])].join(",");
- const profile = ticket.requireCopy ? `add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=${videoCodecs}&audioCodec=${ticket.audioCodec})+add-direct-play-profile(type=videoProfile&container=mkv,mp4&videoCodec=${videoCodecs}&audioCodec=${ticket.audioCodec})` : `add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=h264&audioCodec=${ticket.audioCodec || "aac"})`;
- return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: ticket.copyVideo && ticket.subtitle === undefined ? "1" : "0", directStreamAudio: ticket.audioCodec ? "1" : "0", ...(!ticket.audioCodec ? { audioChannelCount: "2" } : {}), videoCodec, audioCodec: ticket.audioCodec || "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: ticket.subtitle !== undefined ? "burn" : "none", ...(ticket.audio ? { audioStreamID: String(ticket.audio) } : {}), session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, ...(ticket.requireCopy ? { "X-Plex-Client-Profile-Name": "Generic" } : {}), "X-Plex-Client-Profile-Extra": profile })}`;
+ const profile = ticket.requireCopy ? `add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=${videoCodecs}&audioCodec=${ticket.audioCodec})+add-direct-play-profile(type=videoProfile&container=mkv,mp4&videoCodec=${videoCodecs}&audioCodec=${ticket.audioCodec})` : `add-transcode-target(type=videoProfile&context=streaming&protocol=dash&container=mp4&videoCodec=${videoCodecs}&audioCodec=${ticket.audioCodec || "aac"})`;
+ return `/video/:/transcode/universal/start.mpd?${new URLSearchParams({ path: `/library/metadata/${ticket.key}`, mediaIndex: "0", partIndex: "0", protocol: "dash", directPlay: "0", directStream: ticket.copyVideo && ticket.subtitle === undefined ? "1" : "0", directStreamAudio: ticket.audioCodec ? "1" : "0", ...(!ticket.audioCodec ? { audioChannelCount: "2" } : {}), videoCodec, audioCodec: ticket.audioCodec || "aac", maxVideoBitrate: String(ticket.bitrate ?? 8000), videoBitrate: String(ticket.bitrate ?? 8000), videoResolution: `${Math.ceil((ticket.height ?? 1080) * 16 / 9)}x${ticket.height ?? 1080}`, videoQuality: "100", subtitles: ticket.subtitle !== undefined ? "burn" : "none", ...(ticket.audio ? { audioStreamID: String(ticket.audio) } : {}), session: ticket.session!, "X-Plex-Session-Identifier": ticket.session!, // Plex's own profile for our Chrome identity rules out HEVC; Generic defers to the extras.
+ ...(ticket.requireCopy || ticket.nativeVideoCodec ? { "X-Plex-Client-Profile-Name": "Generic" } : {}), "X-Plex-Client-Profile-Extra": profile })}`;
 }
 async function stream(server: Server, resource: string, method: string, range?: string, type?: string, signal?: AbortSignal) {
  const res = await request(server, resource, { method, headers: range ? { range } : {}, signal });
@@ -162,6 +169,8 @@ mediaRoutes.get("/play/:ticket/manifest.mpd", async (c) => {
     await selected.body?.cancel();
     if (!selected.ok) throw fail(502, "Plex could not select this audio or subtitle track.");
    }
+   // Plex starts a copy of non-H.264 video only for a session it has already decided on.
+   if (ticket.nativeVideoCodec && !ticket.requireCopy) await request(server, resource.replace("/start.mpd?", "/decision?")).then((r) => r.body?.cancel());
    if (ticket.requireCopy) {
     const response = await request(server, resource.replace("/start.mpd?", "/decision?"));
     if (!response.ok) throw fail(502, "Plex could not prepare original audio playback. Choose Transcode in Audio to retry.");

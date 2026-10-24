@@ -176,7 +176,7 @@ function SeasonDialog({ show, section, label, freeBytes, saved, onClose }: { sho
             {qualityOptions.map((q) => <button key={q.id} type="button" role="radio" aria-checked={q.id === quality} disabled={!!adding} onClick={() => setQuality(q.id)}
               className={cn("hover:bg-muted rounded-full border px-3 py-1.5 text-sm transition-colors disabled:opacity-50", q.id === quality && "border-brand bg-brand/10 hover:bg-brand/10 font-medium")}>{q.label}</button>)}
           </div>
-          <p className="text-muted-foreground mt-2 text-xs">{qualityOptions.find((q) => q.id === quality)?.copy ? "Keeps the original video." : "Your Plex server converts the video while it downloads; smaller files download faster."} Audio is converted to AAC stereo.</p>
+          <p className="text-muted-foreground mt-2 text-xs">{qualityOptions.find((q) => q.id === quality)?.copy ? "Keeps each episode's original video untouched." : "Your Plex server converts the video to H.264 while it downloads, which is slower than Original on servers without hardware transcoding."} Audio is converted to AAC stereo.</p>
         </fieldset>}
         {kinds.length > 0 && <fieldset>
           <legend className="mb-2 text-sm font-medium">Subtitles</legend>
