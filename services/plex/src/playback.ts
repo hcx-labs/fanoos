@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
-import type { PlaybackSource, Stream } from "@tube/shared";
+import type { DownloadPlan, PlaybackSource, Stream } from "@tube/shared";
 import { fail, type ServiceEnv } from "../../kit/src/service.ts";
 import { seal, open } from "./crypto.ts";
 import { request, serverFor } from "./client.ts";
@@ -13,11 +13,52 @@ import { SharedCache } from "../../kit/src/cache.ts";
 const artwork = new SharedCache<{ type: string; body: string }>("artwork", { ttlSeconds: 86400, staleSeconds: 86400 });
 const ttl = 8 * 3600;
 const audioMime = (codec: string) => ({ eac3: 'audio/mp4; codecs="ec-3"', ac3: 'audio/mp4; codecs="ac-3"', aac: 'audio/mp4; codecs="mp4a.40.2"', mp3: "audio/mpeg", opus: 'audio/webm; codecs="opus"' } as Record<string, string>)[codec];
+const containerMime = (container: string) => ({ mp4: "video/mp4", m4v: "video/mp4", mov: "video/mp4", mkv: "video/x-matroska", webm: "video/webm" } as Record<string, string>)[container];
+const heightOf = (media: NonNullable<PlexItem["Media"]>[number] | undefined) => media?.videoResolution === "4k" ? 2160 : Number(media?.videoResolution) || media?.height || 1080;
+/** The original file for desktop downloads: saved byte-for-byte and played like direct play. */
+export function downloadPlan(ref: string, server: Server, item: PlexItem): DownloadPlan {
+ const media = item.Media?.[0]; const part = media?.Part?.[0];
+ if (!part) throw fail(404, "Plex could not find a media file for this item.", "not_found");
+ if (media.Part!.length > 1) throw fail(400, "This item is split across several files, which can't be downloaded yet.");
+ if (!part.size) throw fail(400, "Plex didn't report this file's size, so it can't be downloaded.");
+ const container = (part.container || media.container || "").toLowerCase();
+ const mimeType = containerMime(container);
+ if (!mimeType) throw fail(400, `${container.toUpperCase() || "This"} files can't be played offline. Fanoos downloads MP4, MKV and WebM files.`);
+ const audio = (part.Stream ?? []).find((s) => s.streamType === 2 && s.default) ?? (part.Stream ?? []).find((s) => s.streamType === 2);
+ const height = heightOf(media);
+ return {
+  duration: (item.duration ?? 0) / 1000,
+  tracks: [],
+  files: [{ id: `part-${part.id}`, label: `Original · ${height}p`, mimeType, container, videoCodec: media.videoCodec, audioCodec: audio?.codec || media.audioCodec, audio: audio?.displayTitle || audio?.language, height, bytes: part.size, url: `/public/file/${seal({ ref, server: server.id, path: part.key }, ttl)}` }],
+  conversions: conversions(ref, server, item, height),
+  // Image subtitles are burned in by the transcoder, which a saved original never passes through.
+  subtitles: subtitleTracks(ref, server, item, part).filter((s) => s.render !== "server"),
+ };
+}
+/** Every audio track at every quality, as the transcoder's DASH output: the same sessions playback uses. */
+function conversions(ref: string, server: Server, item: PlexItem, height: number): NonNullable<DownloadPlan["conversions"]> {
+ const media = item.Media![0]!; const part = media.Part![0]!;
+ const streams = (part.Stream ?? []).filter((s) => s.streamType === 2);
+ const fallback = streams.find((s) => s.default) ?? streams[0];
+ return streams.flatMap((s) => {
+  const audio = { id: String(s.id), label: s.displayTitle || s.language || "Audio", locale: s.languageTag || s.languageCode || "und", default: s === fallback };
+  return (playback(ref, server, item, s.id).sources ?? []).filter((source) => source.stream.dash).map((source) => {
+   const copy = source.id === "transcode-auto";
+   return {
+    id: `${s.id}:${source.id}`, audio,
+    quality: { id: source.id, label: copy ? `Original · ${height}p` : source.label, height: source.height, copy },
+    // Original video keeps the file's bitrate; conversions target theirs. AAC stereo adds about 160 kbps.
+    bitrate: (copy ? (media.bitrate ?? 8000) * 1000 : source.bitrate ?? 8_000_000) + 160_000,
+    manifest: source.stream.dash!, release: source.stream.session?.release,
+   };
+  });
+ });
+}
 export function playback(ref: string, server: Server, item: PlexItem, audio?: number, copyAudio = false): Stream {
  const media = item.Media?.[0]; const part = media?.Part?.[0];
  if (!part) return { unavailable: { code: "unplayable", reason: "Plex could not find a playable media file." } };
  const subtitles = subtitleTracks(ref, server, item, part);
- const height = media?.videoResolution === "4k" ? 2160 : Number(media?.videoResolution) || media?.height || 1080;
+ const height = heightOf(media);
  const sources: PlaybackSource[] = [];
  // Progressive playback follows the file default, not Plex account track preferences.
  const selectedAudio = (part.Stream ?? []).find((s) => s.streamType === 2 && s.default) ?? (part.Stream ?? []).find((s) => s.streamType === 2);

@@ -1,6 +1,7 @@
 import { DownloadedChannels } from "@/components/shell/downloaded-channels";
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router";
+import { DownloadsBadge } from "@/components/shell/downloads-badge";
 import { ChevronDown, Settings } from "lucide-react";
 import { ViaDots } from "@/components/accounts/account-avatar";
 import { ChannelAvatar } from "@/components/channel-avatar";
@@ -70,6 +71,7 @@ export function ChannelRail() {
           >
             <Icon className="size-[18px]" />
             {label}
+            {to === "/downloads" && <DownloadsBadge />}
           </NavLink>
         ))}
       </nav>

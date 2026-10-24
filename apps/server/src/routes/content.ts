@@ -189,7 +189,7 @@ const mine = (userId: string, slug: string) => accountsFor(userId, { slug });
 
 item.get("/videos/:id/download", async (c) => {
   const slug = slugOf(c.req.param("slug"));
-  if (slug !== "youtube") throw fail(400, "Offline downloads are currently available for YouTube only.");
+  if (!has(slug, "downloads")) throw fail(400, "Offline downloads aren't available for this service.");
   const plan = await call<DownloadPlan>(slug, `/videos/${safeId(c.req.param("id"))}/download`, { accounts: refsOf(mine(c.get("user").id, slug)) }).catch(relay);
   return c.json(plan);
 });

@@ -3,6 +3,8 @@ import { Link, Navigate, useParams } from "react-router";
 import { BellOff, Check, Rss, Search, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { SubscribeControl } from "@/components/accounts/subscribe-control";
+import { DownloadButton } from "@/components/download-button";
+import { DownloadSeasonButton } from "@/components/download-season";
 import { MovieCard } from "@/components/movie-card";
 import { ChannelCard } from "@/components/channel-card";
 import { PageHeader } from "@/components/page-header";
@@ -267,6 +269,7 @@ function ShowPage({ page, muted, loading, error, onRetry, onSection, onLoadMore,
                 </Button>
               )}
               <SubscribeControl channel={channel} />
+              {channel.kind === "movie" ? next && <DownloadButton video={next} /> : videos.length > 0 && <DownloadSeasonButton key={section} show={channel} section={section} label={sections.length > 1 ? sections.find((x) => x.id === section)?.label : undefined} />}
               <Button variant={muted ? "default" : "outline"} className="rounded-full px-4" onClick={() => actions.toggleMute(itemKey(ref))}>
                 {muted ? <VolumeX /> : <BellOff />}
                 {muted ? "Hidden from feed" : "Hide from feed"}

@@ -66,7 +66,7 @@ const info = (): BackendInfo => ({
       can: ["Subscribe and unsubscribe", "Like and dislike", "Comment and reply"],
     },
   },
-  features: ["feed", "calendar", "search", "comments", "ratings", "follow", "playlists", "dislikes", "segments", "titles"],
+  features: ["feed", "calendar", "search", "comments", "ratings", "follow", "playlists", "dislikes", "segments", "titles", "downloads"],
   linkHosts: ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtube-nocookie.com", "youtube-nocookie.com"],
   urls: { video: "https://www.youtube.com/watch?v={id}", channel: "https://www.youtube.com/channel/{id}" },
   private: true,

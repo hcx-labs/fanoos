@@ -75,7 +75,9 @@ export type BackendFeature =
   /** Skippable segments (sponsors, intros, credits). */
   | "segments"
   /** Community titles (DeArrow). */
-  | "titles";
+  | "titles"
+  /** Unencrypted media the desktop app can save for offline playback (GET /videos/:id/download). */
+  | "downloads";
 
 export type BackendInfo = {
   protocol: ProtocolVersion;
