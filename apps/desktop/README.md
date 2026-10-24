@@ -84,7 +84,9 @@ queue supports YouTube and Plex (backends advertising the `downloads` feature); 
 licenses for offline Crunchyroll playback. Saving encrypted segments alone does not
 provide an offline playback license.
 
-Before distributing, configure icons, OS signing/notarization, and release updates.
+The macOS package includes the Fanoos lantern icon. Regenerate its assets with
+`npm run build:icon --workspace @fanoos/desktop` after changing the brand artwork.
+Before distributing publicly, configure OS signing/notarization and release updates.
 Verify password/OIDC login, passkeys (especially macOS Touch ID), and signed Crunchyroll
 streaming on each target OS. Popup-based authentication may need provider-specific work.
 

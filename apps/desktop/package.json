@@ -15,7 +15,8 @@
     "predev": "npm run build:offline",
     "test:e2e": "node scripts/test-offline.mjs",
     "pack:drm": "node scripts/package-drm.cjs",
-    "prepack:drm": "npm run build:offline"
+    "prepack:drm": "npm run build:offline",
+    "build:icon": "electron scripts/create-icon.cjs"
   },
   "devDependencies": {
     "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
@@ -38,7 +39,9 @@
     "mac": {
       "target": [
         "dmg"
-      ]
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.entertainment"
     },
     "win": {
       "target": [
