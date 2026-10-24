@@ -6,11 +6,13 @@ import { SearchPalette } from "@/components/shell/search-palette";
 import { TopBar, useNavigation, useSearchShortcut } from "@/components/shell/top-bar";
 import { cn } from "@/lib/utils";
 import { ArtworkGlowContext, resetArtworkGlow } from "@/lib/artwork-glow";
+import { useDownloadNotices } from "@/lib/downloads";
 
 export function Layout() {
   const nav = useNavigation();
   const [searchOpen, setSearchOpen] = useSearchShortcut();
   const { pathname, search, state } = useLocation();
+  useDownloadNotices();
   const glow = !pathname.startsWith("/watch");
   const glowElement = useRef<HTMLDivElement>(null);
   // Each page mounts fresh, except navigations marked as the same page,

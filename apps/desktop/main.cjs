@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell, dialog, components, screen, protocol, session } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain, nativeTheme, shell, dialog, components, screen, protocol, session } = require('electron');
 const { readFileSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 if (process.env.FANOOS_DESKTOP_DATA_DIR) {
@@ -54,6 +54,24 @@ async function loadServer() {
 }
 function openDownloads(id) { navigation++; return win?.loadURL(`${offlineURL}#${id ? `/watch/${id}` : '/downloads'}`); }
 function offlineFrame(event) { return event.senderFrame?.url.startsWith(offlineURL); }
+function appLoaded() { const url = win && !win.isDestroyed() ? win.webContents.getURL() : ''; return isServer(url) || url.startsWith(offlineURL); }
+/** Dock/taskbar progress across the active profile's unfinished downloads. */
+function showProgress() {
+  if (!win || win.isDestroyed()) return;
+  let received = 0, total = 0, running = false;
+  for (const item of downloads.context ? downloads.list().items : []) {
+    if (!['queued', 'downloading'].includes(item.status)) continue;
+    received += item.received; total += item.total; running ||= item.status === 'downloading';
+  }
+  win.setProgressBar(total ? Math.min(1, received / total) : -1, { mode: running ? 'normal' : 'paused' });
+}
+function downloadCompleted(item) {
+  if (appLoaded()) win.webContents.send('downloads:completed', { id: item.id, title: item.video.title });
+  if (win?.isFocused() || !Notification.isSupported()) return;
+  const note = new Notification({ title: 'Download complete', body: `“${item.video.title}” is ready to watch offline.`, silent: true });
+  note.on('click', () => { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
+  note.show();
+}
 function checkDownloads(event, onlineOnly = false) {
   if (!trusted(event) || (!isServer(event.senderFrame.url) && !(offlineFrame(event) && !onlineOnly))) throw new Error('Unavailable');
   if (downloads.context && downloads.context.server !== config.server) throw new Error('Reconnect to your server first.');
@@ -107,10 +125,12 @@ ipcMain.handle('downloads:connect', async (event) => {
 });
 for (const [method, work] of Object.entries({
   list: () => downloads.list(),
-  plan: (id) => downloads.plan(id),
+  plan: (target) => downloads.plan(target),
   add: (selection) => downloads.add(selection),
   pause: (id) => downloads.pause(id),
   resume: (id) => downloads.resume(id),
+  pauseAll: () => downloads.pauseAll(),
+  resumeAll: () => downloads.resumeAll(),
   remove: (id) => downloads.remove(id),
   detail: (id) => downloads.detail(id),
   state: () => downloads.readState(),
@@ -119,7 +139,7 @@ for (const [method, work] of Object.entries({
   reconnect: () => loadServer(),
 })) {
   ipcMain.handle(`downloads:${method}`, (event, value) => {
-    checkDownloads(event, ['plan', 'add'].includes(method));
+    checkDownloads(event, ['plan', 'add', 'resume', 'resumeAll'].includes(method));
     return work(value);
   });
 }
@@ -135,8 +155,9 @@ ipcMain.handle('downloads:disconnect', async (event) => {
 
 app.whenReady().then(async () => {
   try { config = JSON.parse(readFileSync(configPath(), 'utf8')); if (config.server) config.server = serverURL(config.server); } catch { config = {}; }
-  downloads = new Downloads({ directory: app.getPath('userData'), fetch: (url, init) => session.defaultSession.fetch(url, init), notify: () => {
-    if (win && !win.isDestroyed() && (isServer(win.webContents.getURL()) || win.webContents.getURL().startsWith(offlineURL))) win.webContents.send('downloads:changed');
+  downloads = new Downloads({ directory: app.getPath('userData'), fetch: (url, init) => session.defaultSession.fetch(url, init), completed: downloadCompleted, notify: () => {
+    if (appLoaded()) win.webContents.send('downloads:changed');
+    if (downloads) showProgress();
   } });
   if (downloads.context?.server !== config.server) await downloads.lock();
   protocol.handle('fanoos-offline', async (request) => {

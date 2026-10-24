@@ -9,10 +9,10 @@ const A = "a".repeat(40), B = "b".repeat(40);
 const requests: { url: URL; headers: Headers; method: string }[] = [];
 const realFetch = globalThis.fetch;
 let linked = false; let resourceFailure = false; let currentAudio = 8; let canCopy = true;
-const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, originallyAvailableAt: "2001-12-19", year: 2001, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", Stream: [] }] }] };
+const movie = { ratingKey: "4", title: "Test Movie", type: "movie", librarySectionID: 10, librarySectionTitle: "Movies", duration: 120000, originallyAvailableAt: "2001-12-19", year: 2001, addedAt: 12345, thumb: "/library/metadata/4/thumb/1", Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 12000, container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 44, key: "/library/parts/44/file.mp4", size: 4, container: "mp4", Stream: [] }] }] };
 const show = { ratingKey: "1", type: "show", title: "Test Show", leafCount: 1, thumb: "/library/metadata/1/thumb/1" };
 const season = { ratingKey: "2", type: "season", title: "Season 1", parentRatingKey: "1", leafCount: 1 };
-const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", Stream: [{ id: 8, streamType: 2, languageCode: "ja", displayTitle: "Japanese", selected: true }, { id: 9, streamType: 2, languageCode: "en", displayTitle: "English" }, { id: 7, streamType: 3, codec: "srt", language: "English", languageCode: "en" }, { id: 10, streamType: 3, codec: "srt", key: "/library/streams/10", languageCode: "en", displayTitle: "English (external)" }, { id: 11, streamType: 3, codec: "pgs", languageCode: "en", displayTitle: "English (PGS)" }] }] }] };
+const episode = { ratingKey: "3", type: "episode", title: "Test Episode", parentRatingKey: "2", parentTitle: "Season 1", parentIndex: 1, grandparentRatingKey: "1", grandparentTitle: "Test Show", index: 1, duration: 60000, viewOffset: 5000, Media: [{ width: 1920, height: 1080, videoResolution: "1080", bitrate: 14000, container: "mkv", videoCodec: "hevc", audioCodec: "dca", Part: [{ id: 33, key: "/library/parts/33/file.mkv", size: 2048, Stream: [{ id: 8, streamType: 2, languageCode: "ja", displayTitle: "Japanese", selected: true }, { id: 9, streamType: 2, languageCode: "en", displayTitle: "English" }, { id: 7, streamType: 3, codec: "srt", language: "English", languageCode: "en" }, { id: 10, streamType: 3, codec: "srt", key: "/library/streams/10", languageCode: "en", displayTitle: "English (external)" }, { id: 11, streamType: 3, codec: "pgs", languageCode: "en", displayTitle: "English (PGS)" }] }] }] };
 const container = (data: object) => Response.json({ MediaContainer: data });
 globalThis.fetch = async (input, init) => {
  const url = new URL(String(input)); const headers = new Headers(init?.headers); requests.push({ url, headers, method: init?.method || "GET" });
@@ -223,6 +223,23 @@ test("Plex provider contract", async (t) => {
   const response = await service.app.request(detail.stream.progressive, { headers: { range: "bytes=0-3" } }); assert.equal(response.status, 206); assert.equal(response.headers.get("content-range"), "bytes 0-3/4");
   assert.equal(requests.at(-1)?.headers.get("range"), "bytes=0-3");
   assert.equal((await service.app.request(detail.stream.progressive + "tampered")).status, 403);
+ });
+ await t.test("offers the original file for desktop downloads with text subtitles only", async () => {
+  const plan = await (await api(`/videos/${A}.m.4/download?accounts=${ref}`)).json();
+  assert.deepEqual(plan.tracks, []); assert.equal(plan.duration, 120);
+  assert.equal(plan.files.length, 1); assert.equal(plan.files[0].mimeType, "video/mp4"); assert.equal(plan.files[0].bytes, 4); assert.equal(plan.files[0].label, "Original · 1080p");
+  const response = await service.app.request(plan.files[0].url, { headers: { range: "bytes=0-3" } }); assert.equal(response.status, 206);
+  assert.ok(!JSON.stringify(plan).includes("private-server-token"));
+  const episodePlan = await (await api(`/videos/${A}.m.3/download?accounts=${ref}`)).json();
+  assert.equal(episodePlan.files[0].mimeType, "video/x-matroska"); assert.equal(episodePlan.files[0].audio, "Japanese");
+  assert.deepEqual(episodePlan.subtitles.map((s: { id: string }) => s.id), ["7", "10"]);
+  const conversions = episodePlan.conversions as { id: string; audio: { id: string; label: string; default?: boolean }; quality: { id: string; copy?: boolean }; bitrate: number; manifest: string }[];
+  assert.deepEqual([...new Set(conversions.map((c) => c.audio.label))], ["Japanese", "English"]);
+  assert.equal(conversions.find((c) => c.audio.default)?.audio.id, "8");
+  assert.deepEqual(conversions.filter((c) => c.audio.id === "9").map((c) => c.quality.id), ["transcode-auto", "transcode-1080", "transcode-720", "transcode-480", "transcode-360"]);
+  assert.ok(conversions.every((c) => c.manifest.startsWith("/public/play/") && c.bitrate > 0));
+  assert.equal(conversions.find((c) => c.id === "9:transcode-auto")?.quality.copy, true);
+  assert.equal((await api(`/videos/${A}.l.10/download?accounts=${ref}`)).status, 400);
  });
  await t.test("proxies DASH templates, subtitles and session cleanup without tokens", async () => {
   const detail = await (await api(`/videos/${A}.m.3?accounts=${ref}`)).json(); assert.ok(detail.stream.progressive); assert.equal(detail.stream.subtitles[0].format, "ass");

@@ -8,13 +8,13 @@ import { begin, poll, accountView } from "./auth.ts";
 import { account, forgetServers, json, request, serverFor, servers } from "./client.ts";
 import { libraryChannel, showChannel, movieChannel, video } from "./catalog.ts";
 import { itemId, parseId } from "./ids.ts";
-import { mediaRoutes, playback } from "./playback.ts";
+import { downloadPlan, mediaRoutes, playback } from "./playback.ts";
 import type { Server } from "./types.ts";
 const info = (): BackendInfo => ({
  protocol: 1, kind: "plex", name: "Plex", color: "#e5a00d",
  nouns: { channel: "library or show", channels: "libraries and shows", video: "movie or episode", videos: "movies and episodes", follow: "In your library", following: "In your library" },
  link: { method: "redirect", configured: true, can: ["Browse movies and TV on your accessible Plex servers", "Play media through your Plex server", "Sync playback progress to Plex"], cannot: ["See your Plex password", "Manage billing or server settings", "Access libraries that have not been shared with you"], requirement: "Your Plex Media Server must be reachable from Fanoos. Plex playback and subscription requirements still apply." },
- features: ["feed", "search", "progress", "segments", "movies"], linkHosts: ["app.plex.tv"],
+ features: ["feed", "search", "progress", "segments", "movies", "downloads"], linkHosts: ["app.plex.tv"],
  urls: { video: "", channel: "" }, private: false,
 });
 function refs(c: Context<ServiceEnv>) { const value = c.get("accounts"); if (!value.length) throw fail(409, "Connect a Plex account to browse your libraries.", "no_account"); return value; }
@@ -105,6 +105,13 @@ export function createPlexService() {
  });
  v1.get("/channels/:id/followers", (c) => c.json(c.get("accounts")));
  v1.get("/videos/:id", async (c) => { const id = parseId(c.req.param("id")); if (id.library) throw fail(400, "Choose a movie or episode."); const { ref, server } = await target(refs(c), id.server); return c.json(await detail(ref, server, id.key)); });
+ v1.get("/videos/:id/download", async (c) => {
+  const id = parseId(c.req.param("id")); if (id.library) throw fail(400, "Choose a movie or episode.");
+  const { ref, server } = await target(refs(c), id.server);
+  const item = (await json(server, `/library/metadata/${id.key}`, { fresh: true })).MediaContainer.Metadata?.[0];
+  if (!item || !["movie", "episode"].includes(item.type)) throw fail(404, "This Plex item is not a movie or episode.", "not_found");
+  return c.json(downloadPlan(ref, server, item));
+ });
  v1.get("/videos", async (c) => {
   const ids = (c.req.query("ids") || "").split(",").filter(Boolean).slice(0, 50);
   return c.json(await Promise.all(ids.map(async (value) => { const id = parseId(value); const { ref, server } = await target(refs(c), id.server); const item = (await json(server, `/library/metadata/${id.key}`)).MediaContainer.Metadata?.[0]; if (!item) throw fail(404, "Plex item not found."); return video(ref, server, item); })));

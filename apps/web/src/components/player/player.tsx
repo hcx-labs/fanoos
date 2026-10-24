@@ -60,6 +60,8 @@ type Props = {
   /** Start here (seconds), e.g. from a shared link's t= parameter; overrides the saved position. */
   startAt?: number;
   next?: Video;
+  /** Where "Up next" goes, when not the next item's own watch page (saved downloads). */
+  nextHref?: string;
   theater: boolean;
   onTheaterChange: (theater: boolean) => void;
   onTime?: (time: number) => void;
@@ -126,7 +128,7 @@ export const languageLabel = (locale: string) => {
   return where ? `${name} (${where})` : name;
 };
 
-export function Player({ video, stream: inputStream, startAt, next, theater, onTheaterChange, onTime, ref }: Props) {
+export function Player({ video, stream: inputStream, startAt, next, nextHref, theater, onTheaterChange, onTime, ref }: Props) {
   const settings = useSettings();
   const [selectedSource, setSelectedSource] = useState(inputStream.defaultSource ?? "");
   const [providerAudio, setProviderAudio] = useState("");
@@ -635,6 +637,10 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
     const timer = window.setInterval(() => setCountdown((n) => (n === null ? null : Math.max(0, n - 1))), 1000);
     return () => window.clearInterval(timer);
   }, [ended, next, settings.autoplayNext]);
+  useEffect(() => {
+    if (countdown === 0 && next) navigate(nextHref ?? paths.watch(next));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
 
   // Fullscreen state.
   useEffect(() => {
@@ -991,7 +997,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
           <div className="absolute inset-0 grid place-items-center bg-black/70 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-5 px-6 text-center">
               {next && (
-                <Link to={paths.watch(next)} className="group/next flex w-72 flex-col gap-3 text-left">
+                <Link to={nextHref ?? paths.watch(next)} className="group/next flex w-72 flex-col gap-3 text-left">
                   <span className="text-xs font-medium tracking-wide text-white/60 uppercase">
                     {countdown !== null ? `Up next in ${countdown}` : "Up next"}
                   </span>
@@ -1030,7 +1036,7 @@ export function Player({ video, stream: inputStream, startAt, next, theater, onT
               {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
             </Control>
             {next && (
-              <Control label="Next" asLink={paths.watch(next)}>
+              <Control label="Next" asLink={nextHref ?? paths.watch(next)}>
                 <SkipForward className="fill-current" />
               </Control>
             )}

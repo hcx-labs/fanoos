@@ -270,11 +270,25 @@ export async function loadAppData() {
   state = normalize(merged);
   loaded = true;
   emit();
+  if (pending) replayProgress(offline?.pendingProgress ?? {});
   if (pending || (!data && legacy)) await save();
   else window.fanoosDesktop?.downloads?.saveState(state);
   try {
     localStorage.removeItem(LEGACY_KEY);
   } catch {}
+}
+
+/**
+ * Services that keep their own watch progress (Plex, Crunchyroll) didn't hear about offline
+ * playback; tell them now. Core ignores backends without progress tracking.
+ */
+function replayProgress(pending: Record<string, number | null>) {
+  for (const [key, position] of Object.entries(pending).slice(0, 50)) {
+    if (position === null) continue;
+    const slash = key.indexOf("/");
+    if (slash < 0) continue;
+    void api("/actions/progress", { body: { backend: key.slice(0, slash), videoId: key.slice(slash + 1), position } }).catch(() => {});
+  }
 }
 
 /** The bundled desktop player reads the same preferences and saves positions locally. */
