@@ -327,7 +327,13 @@ class Downloads {
       await this.recount(item);
     }
     const count = (set) => Math.ceil(mpd.duration * set.timescale / set.segment - 1e-6);
-    item.total = Math.max(item.received, Math.ceil(mpd.sets.reduce((n, x) => n + x.bandwidth, 0) * mpd.duration / 8));
+    // The manifest's bandwidth is an average, and a copied video's real size varies a lot from it:
+    // once a few segments of a stream are saved, project its size from them instead.
+    const saved = mpd.sets.map(() => ({ bytes: 0, segments: 0 }));
+    const project = () => {
+      item.total = Math.max(item.received, Math.ceil(mpd.sets.reduce((n, x, i) => n + (saved[i].segments >= 3 ? saved[i].bytes / saved[i].segments * count(x) : x.bandwidth * mpd.duration / 8), 0)));
+    };
+    const tally = (index, n, bytes) => { if (n !== 'init') { saved[index].bytes += bytes; saved[index].segments++; } };
     // Interleaved by time, so video and audio advance together through the server's conversion.
     const tasks = [];
     for (let n = -1; n < Math.max(...mpd.sets.map(count)); n++) mpd.sets.forEach((set, index) => { if (n < count(set)) tasks.push({ index, set, n: n < 0 ? 'init' : set.start + n }); });
@@ -339,11 +345,17 @@ class Downloads {
       const response = await this.request(item.server, url, { signal });
       if (!response.ok || !response.body) { await response.body?.cancel(); throw failure(`The conversion stopped at ${Math.round(((n === 'init' ? 0 : n - set.start) * set.segment) / set.timescale)}s (${response.status}). Resume to continue from there.`, response.status); }
       await fsp.rm(`${dest}.part`, { force: true });
-      if (!await this.write(item, response.body, `${dest}.part`, signal)) throw failure('The server returned an empty segment. Resume to retry.', 502);
+      const bytes = await this.write(item, response.body, `${dest}.part`, signal);
+      if (!bytes) throw failure('The server returned an empty segment. Resume to retry.', 502);
       await fsp.rename(`${dest}.part`, dest);
+      tally(index, n, bytes); project();
     };
+    // Segments kept from an earlier attempt count towards the projection too.
+    for (const { index, n } of tasks) { const stat = await fsp.stat(path.join(this.folder(item), segmentName(index, n))).catch(() => null); if (stat) tally(index, n, stat.size); }
+    project();
     // A couple of requests ahead keeps the connection busy while the server converts.
     await Promise.all(Array.from({ length: 3 }, async () => { while (next < tasks.length) await fetchOne(tasks[next++]); }));
+    item.total = item.received;
     this.save();
     return localManifest(mpd, conversion.audio.locale);
   }

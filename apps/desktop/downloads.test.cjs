@@ -256,6 +256,8 @@ test('saves a server conversion segment by segment, resumes after a dropped conn
   assert.equal(item.quality, 'Original · 1080p');
   await until(() => d.item(item.id).status === 'complete' || d.item(item.id).status === 'failed');
   assert.equal(d.item(item.id).status, 'complete', d.item(item.id).error);
+  // The plan's 5 Mbps guess was far off; the size shown is what was saved, never more than 100%.
+  assert.equal(d.item(item.id).total, d.item(item.id).received);
   // 24 seconds in 5-second segments: header + 5 per representation. The retry reused earlier segments.
   for (const rep of ['0', '1']) for (const n of ['header', '0', '1', '2', '3', '4']) assert.ok(requested.some((r) => r.endsWith(`/${rep}/${n}`)), `${rep}/${n}`);
   assert.ok(!requested.some((r) => r.endsWith('/0/5')));
