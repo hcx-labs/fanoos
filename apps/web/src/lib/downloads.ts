@@ -11,7 +11,10 @@ export const canDownload = (video: Pick<Video, "backend" | "live" | "upcoming">)
   return Boolean(bridge && !video.live && !video.upcoming && (bridge.backends ?? ["youtube"]).includes(video.backend ?? "youtube"));
 };
 /** Server conversions this build can save, if the plan offers any; otherwise whole files or tracks. */
-export const conversionsOf = (plan: DownloadPlan) => downloadBridge()?.formats?.includes("segments") ? plan.conversions ?? [] : [];
+const probes: Record<string, string> = { h264: "avc1.640028", hevc: "hvc1.2.4.L120.90", av1: "av01.0.08M.10", vp9: "vp09.02.40.10" };
+/** Whether saved video in this codec plays here (10-bit profiles, the common case for HEVC); unknown codecs don't. */
+const decodes = (codec = "h264") => typeof MediaSource !== "undefined" && Boolean(probes[codec]) && MediaSource.isTypeSupported(`video/mp4; codecs="${probes[codec]}"`);
+export const conversionsOf = (plan: DownloadPlan) => downloadBridge()?.formats?.includes("segments") ? (plan.conversions ?? []).filter((c) => decodes(c.quality.codec)) : [];
 /** YouTube keeps the original locale/label key; other services add the track id, since labels can repeat. */
 export const captionId = (subtitle: Pick<Subtitle, "locale" | "label" | "id">, backend = "youtube") =>
   backend === "youtube" || !subtitle.id ? `${subtitle.locale}\n${subtitle.label}` : `${subtitle.locale}\n${subtitle.label}\n${subtitle.id}`;

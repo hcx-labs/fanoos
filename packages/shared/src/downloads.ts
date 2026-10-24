@@ -44,7 +44,8 @@ export type DownloadConversion = {
   /** "<audio id>:<quality id>", stable across plans so a resumed download finds it again. */
   id: string;
   audio: { id: string; label: string; locale: string; default?: boolean };
-  quality: { id: string; label: string; height?: number; copy?: boolean };
+  /** `codec`: the saved video's codec ("h264", "hevc"), so a device that can't decode it skips this one. */
+  quality: { id: string; label: string; height?: number; copy?: boolean; codec?: string };
   /** Estimated bits per second, video and audio together. */
   bitrate: number;
   /** DASH manifest of a fresh server session, and where to end that session. */

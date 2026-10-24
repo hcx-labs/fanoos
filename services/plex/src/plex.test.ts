@@ -233,12 +233,29 @@ test("Plex provider contract", async (t) => {
   const episodePlan = await (await api(`/videos/${A}.m.3/download?accounts=${ref}`)).json();
   assert.equal(episodePlan.files[0].mimeType, "video/x-matroska"); assert.equal(episodePlan.files[0].audio, "Japanese");
   assert.deepEqual(episodePlan.subtitles.map((s: { id: string }) => s.id), ["7", "10"]);
-  const conversions = episodePlan.conversions as { id: string; audio: { id: string; label: string; default?: boolean }; quality: { id: string; copy?: boolean }; bitrate: number; manifest: string }[];
+  const conversions = episodePlan.conversions as { id: string; audio: { id: string; label: string; default?: boolean }; quality: { id: string; copy?: boolean; codec?: string }; bitrate: number; manifest: string }[];
   assert.deepEqual([...new Set(conversions.map((c) => c.audio.label))], ["Japanese", "English"]);
   assert.equal(conversions.find((c) => c.audio.default)?.audio.id, "8");
   assert.deepEqual(conversions.filter((c) => c.audio.id === "9").map((c) => c.quality.id), ["transcode-auto", "transcode-1080", "transcode-720", "transcode-480", "transcode-360"]);
   assert.ok(conversions.every((c) => c.manifest.startsWith("/public/play/") && c.bitrate > 0));
-  assert.equal(conversions.find((c) => c.id === "9:transcode-auto")?.quality.copy, true);
+  // Original keeps the file's HEVC video and converts only the audio, to AAC stereo.
+  const original = conversions.find((c) => c.id === "9:transcode-auto")!;
+  assert.equal(original.quality.copy, true);
+  assert.equal(original.quality.codec, "hevc");
+  assert.ok(conversions.filter((c) => !c.quality.copy).every((c) => c.quality.codec === "h264"));
+  assert.equal((await service.app.request(original.manifest)).status, 200);
+  const start = requests.findLast((r) => r.url.pathname.endsWith("start.mpd"))!.url;
+  assert.equal(start.searchParams.get("directStream"), "1");
+  assert.equal(start.searchParams.get("videoCodec"), "hevc");
+  assert.match(start.searchParams.get("X-Plex-Client-Profile-Extra")!, /videoCodec=hevc,h264&audioCodec=aac/);
+  assert.equal(start.searchParams.get("audioCodec"), "aac");
+  assert.equal(start.searchParams.get("audioChannelCount"), "2");
+  assert.equal(start.searchParams.get("audioStreamID"), "9");
+  // An average-bitrate cap is below the video's peaks and makes Plex re-encode.
+  assert.equal(start.searchParams.get("maxVideoBitrate"), "200000");
+  assert.equal(start.searchParams.get("X-Plex-Client-Profile-Name"), "Generic");
+  const decision = requests.findLast((r) => r.url.pathname.endsWith("/decision"))!.url;
+  assert.equal(decision.searchParams.get("session"), start.searchParams.get("session"));
   assert.equal((await api(`/videos/${A}.l.10/download?accounts=${ref}`)).status, 400);
  });
  await t.test("proxies DASH templates, subtitles and session cleanup without tokens", async () => {

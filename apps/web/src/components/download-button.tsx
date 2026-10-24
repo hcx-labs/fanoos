@@ -229,7 +229,7 @@ function DownloadDialog({ video, freeBytes, onClose }: { video: Video; freeBytes
                 <span className="text-muted-foreground text-xs tabular-nums">~{fileSize(convSize(c))}</span>
               </button>)}
             </div>
-            <p className="text-muted-foreground mt-2 text-xs">{chosen?.quality.copy ? "Keeps the original video." : "Your Plex server converts the video while it downloads."} Audio is converted to AAC stereo so it plays everywhere.</p>
+            <p className="text-muted-foreground mt-2 text-xs">{chosen?.quality.copy ? `Keeps the original ${chosen.quality.codec?.toUpperCase() ?? ""} video untouched.` : "Your Plex server converts the video to H.264 while it downloads, which is slower than Original on servers without hardware transcoding."} Audio is converted to AAC stereo so it plays everywhere.</p>
           </fieldset>
         </>}
         {!conversions.length && file && !options.length && <div className="bg-secondary/40 space-y-1 rounded-xl border p-3">
