@@ -227,50 +227,122 @@ test('downloads a whole Plex file with prepared ASS subtitles and plays it progr
   await assert.rejects(d.add({ backend: 'plex', videoId: id, file: 'part-44', subtitles: [] }), /already in Downloads/);
 });
 
-test('saves a server conversion segment by segment, resumes after a dropped connection and plays it locally', async (t) => {
+// Fragmented MP4 just detailed enough for timing: an init segment with the track's timescale, and
+// media segments of one sample spanning the segment.
+const box = (type, ...parts) => { const body = Buffer.concat(parts); const head = Buffer.alloc(8); head.writeUInt32BE(body.length + 8); head.write(type, 4, 'latin1'); return Buffer.concat([head, body]); };
+const u32 = (...values) => { const b = Buffer.alloc(values.length * 4); values.forEach((v, i) => b.writeUInt32BE(v, i * 4)); return b; };
+const initSegment = (timescale) => box('ftyp', Buffer.from('iso6')), moovOf = (timescale) => box('moov', box('trak', box('mdia', box('mdhd', u32(0, 0, 0, timescale, 0, 0)))));
+const mediaSegment = (start, duration, tag) => { const tfdt = Buffer.alloc(12); tfdt.writeUInt32BE(0x01000000); tfdt.writeBigUInt64BE(BigInt(start), 4); return Buffer.concat([box('moof', box('traf', box('tfhd', u32(0x020000, 1)), box('tfdt', tfdt), box('trun', u32(0x000100, 1, duration)))), box('mdat', Buffer.from(tag))]); };
+
+test('saves a copied conversion by its real timeline: variable segments, restarts, a skip and the end', async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fanoos-downloads-segments-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const id = `${'c'.repeat(40)}.m.331`;
-  let session = 0, failAt = 3, released = 0;
-  const seg = (rep, n) => Buffer.from(`${rep}:${n}:`.padEnd(64, 'x'));
-  const mpd = (s) => `<?xml version="1.0" encoding="utf-8"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT0H0M23.5S"><Period start="PT0S" id="0"><AdaptationSet segmentAlignment="true"><SegmentTemplate timescale="1" duration="5" initialization="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/header" media="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/$Number$.m4s?a=1&amp;b=2" startNumber="0"></SegmentTemplate><Representation id="0" mimeType="video/mp4" codecs="avc1.640029" bandwidth="4679000" width="1920" height="1080"></Representation></AdaptationSet><AdaptationSet segmentAlignment="true"><SegmentTemplate timescale="1" duration="5" initialization="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/header" media="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/$Number$.m4s" startNumber="0"></SegmentTemplate><Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="160000" audioSamplingRate="48000"></Representation></AdaptationSet></Period></MPD>`;
+  // Keyframe-cut segments (seconds), like Plex copying HEVC: 60.5 s in 11 segments, not 13 × 5 s.
+  const gops = [7, 3, 6, 9, 4, 8, 2.5, 6, 5, 4, 6];
+  const starts = gops.map((_, i) => gops.slice(0, i).reduce((a, b) => a + b, 0));
+  const duration = gops.reduce((a, b) => a + b, 0);
+  const scales = { 0: 1000, 1: 48000 };
+  let session = 0, released = 0, dropped = false, skipped = false;
+  const sessions = new Map(); // per session and representation: next expected number and GOP
   const requested = [];
+  const mpd = (s) => `<?xml version="1.0" encoding="utf-8"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT0H1M0.5S"><Period start="PT0S" id="0"><AdaptationSet segmentAlignment="true"><SegmentTemplate timescale="1" duration="5" initialization="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/header" media="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/$Number$.m4s" startNumber="0"></SegmentTemplate><Representation id="0" mimeType="video/mp4" codecs="hev1.2.1.L120" bandwidth="4679000" width="1440" height="1080"></Representation></AdaptationSet><AdaptationSet segmentAlignment="true"><SegmentTemplate timescale="1" duration="5" initialization="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/header" media="/api/b/plex/public/media/t${s}/video/:/transcode/universal/session/${s}/$RepresentationID$/$Number$.m4s" startNumber="0"></SegmentTemplate><Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="160000" audioSamplingRate="48000"></Representation></AdaptationSet></Period></MPD>`;
   const fetcher = async (url) => {
     const u = new URL(url);
-    if (u.pathname === `/api/v/plex/videos/${id}/download`) { session++; return Response.json({ duration: 23.5, tracks: [], files: [], subtitles: [], conversions: [{ id: '4056:transcode-auto', audio: { id: '4056', label: '日本語 (AC3 Stereo)', locale: 'ja' }, quality: { id: 'transcode-auto', label: 'Original · 1080p', copy: true }, bitrate: 5_000_000, manifest: `/api/b/plex/public/play/p${session}/manifest.mpd`, release: `/api/b/plex/public/play/p${session}/release` }] }); }
-    if (u.pathname === `/api/v/plex/videos/${id}`) return Response.json({ video: { id, backend: 'plex', kind: 'episode', title: 'Reborn', thumbnail: '', duration: 23.5, episode: { seriesId: 's', seriesTitle: 'Tokyo Revengers', season: 1, number: '1' } }, channel: { name: 'Tokyo Revengers' }, stream: {} });
+    if (u.pathname === `/api/v/plex/videos/${id}/download`) { session++; return Response.json({ duration, tracks: [], files: [], subtitles: [], conversions: [{ id: '4056:transcode-auto', audio: { id: '4056', label: '日本語 (EAC3 Stereo)', locale: 'ja' }, quality: { id: 'transcode-auto', label: 'Original · 1080p', copy: true, codec: 'hevc' }, bitrate: 5_000_000, manifest: `/api/b/plex/public/play/p${session}/manifest.mpd`, release: `/api/b/plex/public/play/p${session}/release` }] }); }
+    if (u.pathname === `/api/v/plex/videos/${id}`) return Response.json({ video: { id, backend: 'plex', kind: 'episode', title: 'Reborn', thumbnail: '', duration, episode: { seriesId: 's', seriesTitle: 'Bleach', season: 1, number: '1' } }, channel: { name: 'Bleach' }, stream: {} });
     if (u.pathname.endsWith('/manifest.mpd')) return new Response(mpd(session));
     if (u.pathname.endsWith('/release')) { released++; return Response.json({ ok: true }); }
     const m = /session\/(\d+)\/(\d)\/(header|\d+)\.?m?4?s?$/.exec(u.pathname);
-    if (m) {
-      requested.push(`${m[1]}/${m[2]}/${m[3]}`);
-      if (m[3] === String(failAt) && m[2] === '0') { failAt = -1; throw new TypeError('fetch failed'); }
-      return new Response(seg(m[2], m[3]));
-    }
-    throw new Error(`Unexpected request: ${url}`);
+    if (!m) throw new Error(`Unexpected request: ${url}`);
+    const [, s, rep, which] = m, scale = scales[rep];
+    if (which === 'header') return new Response(Buffer.concat([initSegment(scale), moovOf(scale)]));
+    const n = Number(which);
+    requested.push(`${s}/${rep}/${n}`);
+    if (rep === '0' && n === 4 && !dropped) { dropped = true; throw new TypeError('fetch failed'); }
+    // Plex continues a session when asked for the next number; otherwise it restarts at the
+    // keyframe before n × 5 s. Past the end it repeats the last segment.
+    const key = `${s}/${rep}`, state = sessions.get(key);
+    let gop = state && state.expect === n ? state.gop : Math.max(0, starts.findLastIndex((x) => x <= n * 5));
+    // Once, the video skips a segment, as Plex sometimes does after restarting.
+    if (rep === '0' && gop === 6 && !skipped) { skipped = true; gop = 7; }
+    gop = Math.min(gop, gops.length - 1);
+    sessions.set(key, { expect: n + 1, gop: gop + 1 });
+    return new Response(mediaSegment(starts[gop] * scale, gops[gop] * scale, `${rep}:${gop}`));
   };
   const d = new Downloads({ directory, fetch: fetcher, retryDelays: [10] });
   d.bind(server, profile);
   const item = await d.add({ backend: 'plex', videoId: id, conversion: '4056:transcode-auto', subtitles: [] });
-  assert.equal(item.audio, '日本語 (AC3 Stereo)');
   assert.equal(item.quality, 'Original · 1080p');
-  await until(() => d.item(item.id).status === 'complete' || d.item(item.id).status === 'failed');
+  await until(() => d.item(item.id).status === 'complete' || d.item(item.id).status === 'failed', 10000);
   assert.equal(d.item(item.id).status, 'complete', d.item(item.id).error);
-  // The plan's 5 Mbps guess was far off; the size shown is what was saved, never more than 100%.
-  assert.equal(d.item(item.id).total, d.item(item.id).received);
-  // 24 seconds in 5-second segments: header + 5 per representation. The retry reused earlier segments.
-  for (const rep of ['0', '1']) for (const n of ['header', '0', '1', '2', '3', '4']) assert.ok(requested.some((r) => r.endsWith(`/${rep}/${n}`)), `${rep}/${n}`);
-  assert.ok(!requested.some((r) => r.endsWith('/0/5')));
-  assert.equal(requested.filter((r) => r.endsWith('/0/0')).length, 1);
+  assert.ok(dropped && skipped, 'the fake server dropped a connection and skipped a segment');
   assert.ok(released >= 2);
+  // Past the end the server only repeats; the download stops after a few such answers.
+  assert.ok(requested.length < 60, `${requested.length} requests`);
   const detail = d.detail(item.id);
-  assert.ok(detail.stream.dash.endsWith('/manifest.mpd'));
   const local = await (await d.media(item.id, 'manifest.mpd', new Request(detail.stream.dash))).text();
-  assert.match(local, /initialization="s0-init.mp4" media="s0-\$Number\$.m4s"/);
+  assert.doesNotMatch(local, /session|api|\$Number\$/);
   assert.match(local, /lang="ja"/);
-  assert.doesNotMatch(local, /session|api/);
-  const segment = await d.media(item.id, 's1-3.m4s', new Request(`${detail.stream.dash}`));
-  assert.equal(segment.headers.get('content-type'), 'audio/mp4');
-  assert.equal(await segment.text(), seg('1', '3').toString());
-  assert.equal((await d.media(item.id, 's1-99.m4s', new Request(detail.stream.dash))).status, 404);
+  for (const [rep, scale] of Object.entries(scales)) {
+    // Every segment once, in order, with its real start and length, covering the whole episode.
+    const timeline = [...local.matchAll(new RegExp(`<Representation id="${rep}"[\\s\\S]*?</Representation>`, 'g'))][0][0];
+    assert.match(timeline, new RegExp(`<SegmentList timescale="${scale}"><Initialization sourceURL="s${rep}-init.mp4"/>`));
+    const entries = [...timeline.matchAll(/<S t="(\d+)" d="(\d+)"\/>/g)].map(([, a, b]) => [Number(a) / scale, Number(b) / scale]);
+    assert.deepEqual(entries, gops.map((g, i) => [starts[i], g]));
+    const urls = [...timeline.matchAll(/<SegmentURL media="([^"]+)"\/>/g)].map(([, u]) => u);
+    assert.deepEqual(urls, starts.map((x) => `s${rep}-${x * scale}.m4s`));
+    const served = await d.media(item.id, urls[6], new Request(detail.stream.dash));
+    assert.equal(served.headers.get('content-type'), rep === '0' ? 'video/mp4' : 'audio/mp4');
+    assert.ok((await served.arrayBuffer()).byteLength > 0);
+  }
+  // Only the playable segments are kept, and the size shown is exactly what's saved.
+  const saved = (await fs.readdir(d.folder(d.item(item.id)))).filter((f) => f.endsWith('.m4s'));
+  assert.equal(saved.length, gops.length * 2);
+  assert.equal(d.item(item.id).total, d.item(item.id).received);
+});
+
+// A copied open-GOP segment as Plex muxes it: a keyframe, then leading pictures, one of which
+// carries the keyframe's own presentation time (dts + composition offset).
+const openGop = (start, frames, tag) => {
+  const entries = frames.map(([duration, offset]) => u32(duration, 4, offset));
+  const tfdt = Buffer.alloc(12); tfdt.writeUInt32BE(0x01000000); tfdt.writeBigUInt64BE(BigInt(start), 4);
+  return Buffer.concat([box('moof', box('traf', box('tfhd', u32(0x020000, 1)), box('tfdt', tfdt), box('trun', u32(0x000b00, frames.length), ...entries))), box('mdat', Buffer.alloc(frames.length * 4, tag))]);
+};
+const leading = [[1032, 2016], [984, 1992], [1008, 0], [1008, 1008], [984, 4992]]; // frame 2 repeats frame 0's time
+
+test('repairs a conversion saved by fixed-length numbers: real timeline, repeats skipped, keyframe times playable', async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fanoos-downloads-repair-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const id = 'a'.repeat(32), scale = 24000;
+  const folder = path.join(directory, 'offline-media', id);
+  await fs.mkdir(folder, { recursive: true });
+  // Three real segments (5016 ticks each), then the server's repeat of the last one past the end.
+  const starts = [0, 5016, 10032];
+  for (const index of [0, 1]) {
+    await fs.writeFile(path.join(folder, `s${index}-init.mp4`), Buffer.concat([initSegment(scale), moovOf(scale)]));
+    for (const [n, start] of [...starts, 10032].entries()) await fs.writeFile(path.join(folder, `s${index}-${n}.m4s`), openGop(start, leading, n));
+  }
+  const old = `<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:isoff-live:2011" mediaPresentationDuration="PT0.627S" minBufferTime="PT2S"><Period><AdaptationSet contentType="video" mimeType="video/mp4" segmentAlignment="true"><SegmentTemplate timescale="1" duration="5" startNumber="0" initialization="s0-init.mp4" media="s0-$Number$.m4s"/><Representation id="0" bandwidth="4679000" codecs="hev1.2.1.L120" width="1440" height="1080"/></AdaptationSet><AdaptationSet contentType="audio" mimeType="audio/mp4" segmentAlignment="true" lang="ja"><SegmentTemplate timescale="1" duration="5" startNumber="0" initialization="s1-init.mp4" media="s1-$Number$.m4s"/><Representation id="1" bandwidth="160000" codecs="mp4a.40.2" audioSamplingRate="48000"/></AdaptationSet></Period></MPD>`;
+  await fs.writeFile(path.join(folder, 'manifest.mpd'), old);
+  const scope = require('node:crypto').createHash('sha256').update(`${server}\n${profile.id}`).digest('hex');
+  const item = { id, scope, server, backend: 'plex', videoId: `${'c'.repeat(40)}.m.1`, status: 'complete', createdAt: 1, received: 1, total: 1, selection: { backend: 'plex', videoId: `${'c'.repeat(40)}.m.1`, conversion: '1:transcode-auto', subtitles: [] }, video: { id: `${'c'.repeat(40)}.m.1`, title: 'Old', duration: 0.627 }, files: { segments: { signature: 'old', sets: [{ mimeType: 'video/mp4' }, { mimeType: 'audio/mp4' }] } }, subtitles: [] };
+  await fs.writeFile(path.join(directory, 'downloads.json'), JSON.stringify({ items: [item], states: {}, context: null }));
+  const d = new Downloads({ directory, fetch: async () => { throw new TypeError('offline'); } });
+  d.bind(server, profile);
+  const local = await (await d.media(id, 'manifest.mpd', new Request('fanoos-offline://app/media/x/manifest.mpd'))).text();
+  assert.match(local, /lang="ja"/);
+  for (const index of [0, 1]) {
+    const rep = [...local.matchAll(new RegExp(`<Representation id="${index}"[\\s\\S]*?</Representation>`, 'g'))][0][0];
+    assert.deepEqual([...rep.matchAll(/<S t="(\d+)" d="(\d+)"\/>/g)].map(([, a, b]) => [Number(a), Number(b)]), starts.map((x) => [x, 5016]));
+    assert.deepEqual([...rep.matchAll(/<SegmentURL media="([^"]+)"\/>/g)].map(([, u]) => u), [0, 1, 2].map((n) => `s${index}-${n}.m4s`));
+  }
+  // The keyframe moved one tick later, so no leading picture shares its time; nothing else changed.
+  const fixed = await fs.readFile(path.join(folder, 's0-1.m4s')), original = openGop(5016, leading, 1);
+  assert.equal(fixed.length, original.length);
+  const offsetAt = fixed.indexOf(u32(1032, 4, 2016 + 1));
+  assert.ok(offsetAt > 0, 'keyframe composition offset is 2017');
+  assert.equal(Buffer.compare(fixed.subarray(offsetAt + 12), original.subarray(offsetAt + 12)), 0);
+  // Once repaired, the journal records it and the manifest isn't rebuilt again.
+  assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'downloads.json'), 'utf8')).items[0].files.segments.timed ?? d.item(id).files.segments.timed, 2);
 });

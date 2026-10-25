@@ -29,7 +29,11 @@ choose Download:
 - **Plex** offers each audio track at Original quality (the video copied untouched) or
   1080p/720p/480p/360p. Your Plex server converts while the desktop app saves its DASH
   segments, and audio is converted to AAC stereo so tracks like AC3 play. Finished segments are
-  kept, so an interrupted download continues where it stopped. Re-encoding the video is limited
+  kept, so an interrupted download continues where it stopped. A copied video's segments are
+  cut at keyframes and vary in length, so the app follows their real timestamps: it saves each
+  segment under its start time, fills any part Plex skips, stops at the real end, and lists the
+  segments with their times in the offline manifest. Downloads saved before this are repaired
+  the first time they play. Re-encoding the video is limited
   by the server's CPU/GPU, and copying the video is usually limited by the network. Desktop
   builds without segment support save the original file instead, which plays its default audio.
   Text subtitles are saved (ASS keeps its styling, and Forced tracks are a separate choice). Image
