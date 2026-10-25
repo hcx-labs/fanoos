@@ -47,10 +47,108 @@ function segmentedManifest(xmlText) {
   return { duration, sets };
 }
 const segmentName = (index, n) => n === 'init' ? `s${index}-init.mp4` : `s${index}-${n}.m4s`;
-/** The saved segments as an on-demand manifest that points at local files. */
+function boxes(buf, start = 0, end = buf.length) {
+  const found = [];
+  for (let p = start; p + 8 <= end;) {
+    let size = buf.readUInt32BE(p), header = 8;
+    if (size === 1 && p + 16 <= end) { size = Number(buf.readBigUInt64BE(p + 8)); header = 16; }
+    if (size < header || p + size > end) break;
+    found.push({ type: buf.toString('latin1', p + 4, p + 8), start: p + header, end: p + size, at: p });
+    p += size;
+  }
+  return found;
+}
+const child = (buf, box, type) => box && boxes(buf, box.start, box.end).find((b) => b.type === type);
+/** The media timescale of an init segment's track. */
+function trackTimescale(init) {
+  const mdhd = child(init, child(init, child(init, boxes(init).find((b) => b.type === 'moov'), 'trak'), 'mdia'), 'mdhd');
+  if (!mdhd) throw new Error('The server returned an unreadable segment.');
+  return init.readUInt32BE(mdhd.start + (init[mdhd.start] === 1 ? 20 : 12));
+}
+/** Start and length of a fragmented-MP4 segment, in its track's timescale. */
+function fragmentTiming(buf) {
+  let start = null, duration = 0;
+  for (const moof of boxes(buf).filter((b) => b.type === 'moof')) for (const traf of boxes(buf, moof.start, moof.end).filter((b) => b.type === 'traf')) {
+    const kids = boxes(buf, traf.start, traf.end), tfhd = kids.find((b) => b.type === 'tfhd'), tfdt = kids.find((b) => b.type === 'tfdt');
+    if (!tfhd || !tfdt) continue;
+    const flags = buf.readUInt32BE(tfhd.start) & 0xffffff;
+    let q = tfhd.start + 8; if (flags & 1) q += 8; if (flags & 2) q += 4;
+    const fallback = flags & 8 ? buf.readUInt32BE(q) : 0;
+    if (start === null) start = buf[tfdt.start] === 1 ? Number(buf.readBigUInt64BE(tfdt.start + 4)) : buf.readUInt32BE(tfdt.start + 4);
+    for (const trun of kids.filter((b) => b.type === 'trun')) {
+      const f = buf.readUInt32BE(trun.start) & 0xffffff, samples = buf.readUInt32BE(trun.start + 4);
+      let r = trun.start + 8; if (f & 1) r += 4; if (f & 4) r += 4;
+      const stride = [0x100, 0x200, 0x400, 0x800].filter((bit) => f & bit).length * 4;
+      for (let i = 0; i < samples; i++, r += stride) duration += f & 0x100 ? buf.readUInt32BE(r) : fallback;
+    }
+  }
+  if (start === null || !(duration > 0)) throw new Error('The server returned an unreadable segment.');
+  return { t: start, d: duration };
+}
+/**
+ * A media server copying open-GOP video (HEVC with leading pictures) can stamp a leading picture
+ * with its keyframe's own presentation time. Chromium then drops the keyframe and the whole
+ * segment that depends on it. Moving the keyframe one tick later keeps every frame (the leading
+ * picture belongs just before it). Patches `buf` in place; true when it changed.
+ */
+function fixKeyframeTime(buf) {
+  const moof = boxes(buf).find((b) => b.type === 'moof'), trun = child(buf, child(buf, moof, 'traf'), 'trun');
+  if (!trun) return false;
+  const flags = buf.readUInt32BE(trun.start) & 0xffffff, count = buf.readUInt32BE(trun.start + 4), signed = buf[trun.start] === 1;
+  if (!(flags & 0x800) || !(flags & 0x100) || count < 2) return false;
+  let at = trun.start + 8 + (flags & 1 ? 4 : 0) + (flags & 4 ? 4 : 0);
+  const stride = [0x100, 0x200, 0x400, 0x800].filter((bit) => flags & bit).length * 4, offset = stride - 4;
+  if (at + count * stride > buf.length) return false;
+  const cto = (i) => signed ? buf.readInt32BE(at + i * stride + offset) : buf.readUInt32BE(at + i * stride + offset);
+  let dts = 0; const times = [];
+  for (let i = 0; i < count; i++) { times.push(dts + cto(i)); dts += buf.readUInt32BE(at + i * stride); }
+  if (!times.slice(1).includes(times[0])) return false;
+  signed ? buf.writeInt32BE(cto(0) + 1, at + offset) : buf.writeUInt32BE(cto(0) + 1, at + offset);
+  return true;
+}
+/** Applies fixKeyframeTime to a saved segment, rewriting only its first bytes. */
+async function fixSegment(file) {
+  const handle = await fsp.open(file, 'r+');
+  try {
+    const buf = Buffer.alloc(256 * 1024), { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+    const headBytes = buf.subarray(0, bytesRead);
+    if (fixKeyframeTime(headBytes)) await handle.write(headBytes, 0, headBytes.length, 0);
+  } finally { await handle.close(); }
+}
+/** A segment's first bytes: its moof (timing) comes before the media data. */
+async function head(file) {
+  const handle = await fsp.open(file, 'r');
+  try { const buf = Buffer.alloc(256 * 1024); const { bytesRead } = await handle.read(buf, 0, buf.length, 0); return buf.subarray(0, bytesRead); }
+  finally { await handle.close(); }
+}
+/**
+ * The playable timeline from segments in any order: by start time, without those that only repeat
+ * time already covered (a server restarting its conversion sends some again), and each declared
+ * up to where the next begins. `holes` is time no segment covers.
+ */
+function playable(entries, slack) {
+  const kept = [], holes = [];
+  let covered = 0;
+  for (const e of [...entries].sort((a, b) => a.t - b.t || b.d - a.d)) {
+    if (e.t + e.d <= covered + slack) continue;
+    if (e.t > covered + slack) holes.push([covered, e.t]);
+    const last = kept.at(-1);
+    if (last && e.t < last.t + last.d) { last.d = e.t - last.t; if (last.d <= 0) kept.pop(); }
+    kept.push({ ...e });
+    covered = e.t + e.d;
+  }
+  return { kept, holes, covered };
+}
+/**
+ * The saved segments as an on-demand manifest that points at local files. With measured timelines,
+ * segments are listed with their real times; segments of a copied video vary in length.
+ */
 function localManifest({ duration, sets }, language) {
-  const set = (x, i) => `<AdaptationSet contentType="${x.mimeType.split('/')[0]}" mimeType="${xml(x.mimeType)}" segmentAlignment="true"${x.mimeType.startsWith('audio/') && language ? ` lang="${xml(language)}"` : ''}><SegmentTemplate timescale="${x.timescale}" duration="${x.segment}" startNumber="${x.start}" initialization="${segmentName(i, 'init')}" media="s${i}-$Number$.m4s"/><Representation id="${i}" bandwidth="${x.bandwidth}" codecs="${xml(x.codecs)}"${x.width ? ` width="${x.width}" height="${x.height}"` : ''}${x.sampleRate ? ` audioSamplingRate="${x.sampleRate}"` : ''}/></AdaptationSet>`;
-  return `<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:isoff-live:2011" mediaPresentationDuration="PT${duration}S" minBufferTime="PT2S"><Period>${sets.map(set).join('')}</Period></MPD>`;
+  const segments = (x, i) => x.timeline
+    ? `<SegmentList timescale="${x.timeline.timescale}"><Initialization sourceURL="${segmentName(i, 'init')}"/><SegmentTimeline>${x.timeline.entries.map((e) => `<S t="${e.t}" d="${e.d}"/>`).join('')}</SegmentTimeline>${x.timeline.entries.map((e) => `<SegmentURL media="${segmentName(i, e.n)}"/>`).join('')}</SegmentList>`
+    : `<SegmentTemplate timescale="${x.timescale}" duration="${x.segment}" startNumber="${x.start}" initialization="${segmentName(i, 'init')}" media="s${i}-$Number$.m4s"/>`;
+  const set = (x, i) => `<AdaptationSet contentType="${x.mimeType.split('/')[0]}" mimeType="${xml(x.mimeType)}" segmentAlignment="true"${x.mimeType.startsWith('audio/') && language ? ` lang="${xml(language)}"` : ''}><Representation id="${i}" bandwidth="${x.bandwidth}" codecs="${xml(x.codecs)}"${x.width ? ` width="${x.width}" height="${x.height}"` : ''}${x.sampleRate ? ` audioSamplingRate="${x.sampleRate}"` : ''}>${segments(x, i)}</Representation></AdaptationSet>`;
+  return `<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:full:2011" mediaPresentationDuration="PT${duration}S" minBufferTime="PT2S"><Period>${sets.map(set).join('')}</Period></MPD>`;
 }
 /** Network drops, timeouts and server errors are worth retrying on their own; other failures need the viewer. */
 const failure = (message, status) => Object.assign(new Error(message), { transient: status >= 500 || status === 408 || status === 429 });
@@ -58,7 +156,7 @@ const isTransient = (error) => error?.transient === true || error instanceof Typ
 
 function manifest(duration, video, audio) {
   const set = (t, name) => `<AdaptationSet contentType="${t.kind}" mimeType="${xml(t.mimeType)}"${t.language ? ` lang="${xml(t.language)}"` : ''}><Label>${xml(t.label)}</Label><Representation id="${xml(t.id)}" bandwidth="${t.bandwidth}" codecs="${xml(t.codecs)}"${t.width ? ` width="${t.width}" height="${t.height}" frameRate="${t.fps || 30}"` : ''}${t.sampleRate ? ` audioSamplingRate="${t.sampleRate}"` : ''}>${t.channels ? `<AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="${t.channels}"/>` : ''}<BaseURL>${name}.track</BaseURL><SegmentBase indexRange="${xml(t.indexRange)}"><Initialization range="${xml(t.initRange)}"/></SegmentBase></Representation></AdaptationSet>`;
-  return `<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" mediaPresentationDuration="PT${duration}S" minBufferTime="PT1.5S"><Period>${set(video, 'video')}${set(audio, 'audio')}</Period></MPD>`;
+  return `<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:full:2011" mediaPresentationDuration="PT${duration}S" minBufferTime="PT1.5S"><Period>${set(video, 'video')}${set(audio, 'audio')}</Period></MPD>`;
 }
 
 /** Range-aware local responses: DASH reads the index and then seeks through each track. */
@@ -319,33 +417,90 @@ class Downloads {
       const url = new URL(set[key], item.server);
       if (url.origin !== item.server || !url.pathname.startsWith(conf.segments)) throw new Error('Invalid media source.');
     }
-    const signature = JSON.stringify([conversion.id, mpd.sets.map((x) => [x.mimeType, x.codecs, x.timescale, x.segment, x.start])]);
+    // v2: segments are saved under their start time. Earlier downloads used the server's numbers.
+    const signature = JSON.stringify(['v2', conversion.id, mpd.sets.map((x) => [x.mimeType, x.codecs, x.timescale, x.segment, x.start])]);
+    const folder = this.folder(item);
     if (item.files.segments?.signature !== signature) {
       // A different conversion than the saved segments: start over.
-      for (const name of await fsp.readdir(this.folder(item))) if (/^s\d+-/.test(name)) await fsp.rm(path.join(this.folder(item), name), { force: true });
+      for (const name of await fsp.readdir(folder)) if (/^s\d+-/.test(name)) await fsp.rm(path.join(folder, name), { force: true });
       item.files = { segments: { signature, sets: mpd.sets.map(({ mimeType }) => ({ mimeType })) } };
       await this.recount(item);
     }
-    const count = (set) => Math.ceil(mpd.duration * set.timescale / set.segment - 1e-6);
-    item.total = Math.max(item.received, Math.ceil(mpd.sets.reduce((n, x) => n + x.bandwidth, 0) * mpd.duration / 8));
-    // Interleaved by time, so video and audio advance together through the server's conversion.
-    const tasks = [];
-    for (let n = -1; n < Math.max(...mpd.sets.map(count)); n++) mpd.sets.forEach((set, index) => { if (n < count(set)) tasks.push({ index, set, n: n < 0 ? 'init' : set.start + n }); });
-    let next = 0;
-    const fetchOne = async ({ index, set, n }) => {
-      const dest = path.join(this.folder(item), segmentName(index, n));
-      if (fs.existsSync(dest)) return;
-      const url = n === 'init' ? set.init : set.media.replaceAll('$Number$', String(n));
+    const fetchTo = async (url, dest, at) => {
       const response = await this.request(item.server, url, { signal });
-      if (!response.ok || !response.body) { await response.body?.cancel(); throw failure(`The conversion stopped at ${Math.round(((n === 'init' ? 0 : n - set.start) * set.segment) / set.timescale)}s (${response.status}). Resume to continue from there.`, response.status); }
+      if (!response.ok || !response.body) { await response.body?.cancel(); throw failure(`The conversion stopped at ${Math.round(at)}s (${response.status}). Resume to continue from there.`, response.status); }
       await fsp.rm(`${dest}.part`, { force: true });
       if (!await this.write(item, response.body, `${dest}.part`, signal)) throw failure('The server returned an empty segment. Resume to retry.', 502);
-      await fsp.rename(`${dest}.part`, dest);
+      return `${dest}.part`;
     };
-    // A couple of requests ahead keeps the connection busy while the server converts.
-    await Promise.all(Array.from({ length: 3 }, async () => { while (next < tasks.length) await fetchOne(tasks[next++]); }));
+    const progress = mpd.sets.map((set) => ({ covered: 0, bytes: 0, end: 1, estimate: set.bandwidth * mpd.duration / 8 }));
+    const project = () => {
+      // The manifest's bandwidth is an average that a copied video's real size can be far from:
+      // once some of a stream is saved, project its size from what's saved.
+      item.total = Math.max(item.received, Math.ceil(progress.reduce((n, p) => n + (p.covered > 0.02 * p.end ? p.bytes / p.covered * p.end : p.estimate), 0)));
+    };
+    /**
+     * One stream, moving through the presentation by time. A copied video's segments are cut at
+     * keyframes, so they vary in length and the server's segment numbers aren't times; asking for
+     * a number the server doesn't expect makes it restart there, sending time again or skipping
+     * some. Each segment is saved under its own start time, holes are filled by asking again
+     * from before them, and the stream ends where the presentation does.
+     */
+    const stream = async (set, index) => {
+      const initPath = path.join(folder, segmentName(index, 'init'));
+      if (!fs.existsSync(initPath)) await fsp.rename(await fetchTo(set.init, initPath, 0), initPath);
+      const timescale = trackTimescale(await fsp.readFile(initPath));
+      const seconds = set.segment / set.timescale, slack = 0.05 * timescale, end = mpd.duration * timescale;
+      const entries = new Map();
+      for (const name of await fsp.readdir(folder)) {
+        const m = new RegExp(`^s${index}-(\\d+)\\.m4s$`).exec(name);
+        if (!m) continue;
+        try { entries.set(Number(m[1]), { n: Number(m[1]), ...fragmentTiming(await head(path.join(folder, name))), bytes: (await fsp.stat(path.join(folder, name))).size }); }
+        catch { await fsp.rm(path.join(folder, name), { force: true }); }
+      }
+      const at = () => playable([...entries.values()], slack);
+      const tally = () => { const { kept, covered } = at(); Object.assign(progress[index], { covered, end, bytes: kept.reduce((n, e) => n + entries.get(e.n).bytes, 0) }); project(); };
+      tally();
+      // Resume from the segment that covers where saved time ends.
+      let n = Math.max(set.start, Math.floor(at().covered / timescale / seconds));
+      let steps = 0, idle = 0, retreat = null;
+      for (;;) {
+        const { covered, holes } = at();
+        // A final frame can end slightly before the stated duration.
+        if (!holes.length && covered >= end - timescale) break;
+        // Ask again from before a hole, once; the answers then move forward through it. If they
+        // pass it without filling it, step back again.
+        if (holes.length && (retreat?.[0] !== holes[0][0] || n * seconds * timescale > holes[0][1] + 2 * seconds * timescale)) {
+          retreat = holes[0];
+          n = Math.max(set.start, Math.floor(holes[0][0] / timescale / seconds) - 1);
+        }
+        if (++steps > 3 * Math.ceil(mpd.duration / seconds) + 20) throw failure('The server kept sending parts of this video out of order. Resume to try again.', 502);
+        const part = await fetchTo(set.media.replaceAll('$Number$', String(n)), path.join(folder, `s${index}-next.m4s`), n * seconds);
+        await fixSegment(part);
+        const timing = fragmentTiming(await head(part));
+        const bytes = (await fsp.stat(part)).size;
+        await fsp.rename(part, path.join(folder, segmentName(index, timing.t)));
+        entries.set(timing.t, { n: timing.t, ...timing, bytes });
+        // Past the end the server only repeats the end: stop once nothing new arrives there.
+        idle = at().covered > covered || n * seconds < mpd.duration ? 0 : idle + 1;
+        if (idle >= 3) break;
+        tally();
+        n++;
+      }
+      const { kept, holes } = at();
+      if (holes.length) throw failure('Part of this video is missing. Resume to try again.', 502);
+      // Drop what only repeated other segments, so the folder holds just the playable timeline.
+      const keep = new Set(kept.map((e) => e.n));
+      for (const e of entries.values()) if (!keep.has(e.n)) await fsp.rm(path.join(folder, segmentName(index, e.n)), { force: true });
+      return { timescale, entries: kept.map(({ n, t, d }) => ({ n, t, d })) };
+    };
+    const timelines = await Promise.all(mpd.sets.map(stream));
+    const sets = mpd.sets.map((set, i) => ({ mimeType: set.mimeType, codecs: set.codecs, bandwidth: set.bandwidth, width: set.width, height: set.height, sampleRate: set.sampleRate, timeline: timelines[i] }));
+    item.files.segments = { signature, sets, duration: mpd.duration, timed: 2 };
+    await this.recount(item);
+    item.total = item.received;
     this.save();
-    return localManifest(mpd, conversion.audio.locale);
+    return localManifest({ duration: mpd.duration, sets }, conversion.audio.locale);
   }
   async asset(item, resource, filename, signal, maxBytes, validate) {
     const started = Date.now();
@@ -437,7 +592,42 @@ class Downloads {
     if (!types[filename]) return new Response(null, { status: 404 });
     const origin = request.headers.get('origin');
     if (origin && !['fanoos-offline://app', this.context.server].includes(origin)) return new Response(null, { status: 403 });
+    if (filename === 'manifest.mpd' && item.files.segments && item.files.segments.timed !== 2) await this.repair(item).catch(() => {});
     return serveFile(path.join(this.folder(item), filename), types[filename], request, { 'access-control-allow-origin': origin || 'fanoos-offline://app', 'access-control-expose-headers': 'content-range, content-length, accept-ranges' });
+  }
+  /**
+   * Downloads saved before segments were timed assumed fixed-length segments, but a copied video's
+   * vary, and the server sent some twice. Reads each saved segment's real timing, fixes keyframe
+   * times Chromium can't play (see fixKeyframeTime) and rewrites the manifest to list the
+   * playable segments in order; nothing is deleted.
+   */
+  repair(item) {
+    this.repairs ??= new Map();
+    if (!this.repairs.has(item.id)) this.repairs.set(item.id, (async () => {
+      const folder = this.folder(item), file = path.join(folder, 'manifest.mpd');
+      const text = await fsp.readFile(file, 'utf8');
+      const mpd = segmentedManifest(text), language = /<AdaptationSet[^>]*\blang="([^"]+)"/.exec(text)?.[1];
+      const names = await fsp.readdir(folder);
+      let missing = 0;
+      const sets = await Promise.all(mpd.sets.map(async (set, index) => {
+        const timescale = trackTimescale(await fsp.readFile(path.join(folder, segmentName(index, 'init'))));
+        const entries = [];
+        for (const name of names) {
+          const m = new RegExp(`^s${index}-(\\d+)\\.m4s$`).exec(name);
+          if (!m) continue;
+          await fixSegment(path.join(folder, name));
+          entries.push({ n: Number(m[1]), ...fragmentTiming(await head(path.join(folder, name))) });
+        }
+        const { kept, holes } = playable(entries, 0.05 * timescale);
+        missing = Math.max(missing, holes.reduce((sum, [a, b]) => sum + (b - a) / timescale, 0));
+        return { mimeType: set.mimeType, codecs: set.codecs, bandwidth: set.bandwidth, width: set.width, height: set.height, sampleRate: set.sampleRate, timeline: { timescale, entries: kept.map(({ n, t, d }) => ({ n, t, d })) } };
+      }));
+      await fsp.writeFile(`${file}.part`, localManifest({ duration: mpd.duration, sets }, language));
+      await fsp.rename(`${file}.part`, file);
+      item.files.segments = { ...item.files.segments, sets, duration: mpd.duration, timed: 2, ...(missing > 0.5 ? { missing: Math.round(missing) } : {}) };
+      this.save();
+    })().finally(() => this.repairs.delete(item.id)));
+    return this.repairs.get(item.id);
   }
   readState() { return this.data.states[this.requireContext().scope] ?? { data: null, dirty: false }; }
   writeState(value, offline) {
